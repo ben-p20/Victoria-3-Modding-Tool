@@ -50,9 +50,54 @@ class Vic3Logic:
                     return True
         return False
 
+    def scan_definitions_for_options(self):
+        """Scans common/country_definitions for unique cultures, religions, tiers, and country types."""
+        def_path = os.path.join(self.mod_path, "common/country_definitions")
+
+        cultures = set()
+        religions = set()
+        tiers = set()
+        types = set()
+
+        if not os.path.exists(def_path):
+            return [], [], [], []
+
+        for root, _, files in os.walk(def_path):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                try:
+                    with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
+
+                # Cultures
+                cul_matches = re.finditer(r"cultures\s*=\s*\{([^}]+)\}", content)
+                for m in cul_matches:
+                    for c in m.group(1).split():
+                        cultures.add(c.strip())
+
+                # Religions
+                rel_matches = re.finditer(r"religion\s*=\s*([A-Za-z0-9_]+)", content)
+                for m in rel_matches:
+                    r_val = m.group(1).strip()
+                    if r_val.lower() != "technically":
+                        religions.add(r_val)
+
+                # Tiers
+                tier_matches = re.finditer(r"tier\s*=\s*([A-Za-z0-9_]+)", content)
+                for m in tier_matches:
+                    tiers.add(m.group(1).strip())
+
+                # Country Types
+                type_matches = re.finditer(r"country_type\s*=\s*([A-Za-z0-9_]+)", content)
+                for m in type_matches:
+                    types.add(m.group(1).strip())
+
+        return sorted(list(cultures)), sorted(list(religions)), sorted(list(tiers)), sorted(list(types))
+
     def get_country_data(self, tag):
         """Attempts to find culture, religion, and capital of a tag."""
-        data = { "cultures": "british", "religion": "protestant", "capital": None }
+        data = { "cultures": None, "religion": None, "capital": None }
         
         def_path = os.path.join(self.mod_path, "common/country_definitions")
         if not os.path.exists(def_path): return data
@@ -67,7 +112,7 @@ class Vic3Logic:
                 except:
                     with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
 
-                match = re.search(r"(^|\s)" + re.escape(clean_tag) + r"\s*=\s*\{", content, re.MULTILINE)
+                match = re.search(r"(^|\s)" + re.escape(clean_tag) + r"\s*=\s*\{", content, re.MULTILINE | re.IGNORECASE)
                 if match:
                     start_brace = match.end() - 1
                     _, end_brace = self.find_block_content(content, start_brace)
@@ -81,10 +126,66 @@ class Vic3Logic:
                         rel_match = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", block_content)
                         if rel_match: data["religion"] = rel_match.group(1).strip()
 
-                        cap_match = re.search(r"capital_state\s*=\s*([A-Za-z0-9_]+)", block_content)
-                        if cap_match: data["capital"] = cap_match.group(1).strip()
+                        # Matches capital = ... or capital_state = ...
+                        cap_match = re.search(r"(capital|capital_state)\s*=\s*([A-Za-z0-9_]+)", block_content)
+                        if cap_match: data["capital"] = cap_match.group(2).strip()
                         return data
         return data
+
+    def get_tech_tier_from_history(self, tag):
+        """Scans history/countries for tech tier."""
+        hist_dir = os.path.join(self.mod_path, "common/history/countries")
+        if not os.path.exists(hist_dir): return None
+
+        clean_tag = tag.replace("c:", "").strip()
+
+        for root, _, files in os.walk(hist_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                # Check for country block c:TAG
+                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content):
+                     match = re.search(r"effect_starting_technology_tier_\d+_tech\s*=\s*yes", content)
+                     if match:
+                         return match.group(0)
+        return None
+
+    def get_pop_history_data(self, tag):
+        """Scans history/population for wealth and literacy effects."""
+        pop_dir = os.path.join(self.mod_path, "common/history/population")
+        if not os.path.exists(pop_dir): return None
+
+        clean_tag = tag.replace("c:", "").strip()
+        effects = []
+
+        for root, _, files in os.walk(pop_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content):
+                    c_start, c_end = self.get_block_range_safe(content, f"c:{clean_tag}")
+                    if c_start is not None:
+                        block = content[c_start:c_end]
+                        wealth = re.search(r"effect_starting_pop_wealth_[a-z_]+\s*=\s*yes", block)
+                        if wealth: effects.append(wealth.group(0))
+
+                        literacy = re.search(r"effect_starting_pop_literacy_[a-z_]+\s*=\s*yes", block)
+                        if literacy: effects.append(literacy.group(0))
+
+                        if effects:
+                            return "\n\t\t".join(effects)
+        return None
 
     def get_nearest_vic3_color(self, rgb):
         colors = {
@@ -105,11 +206,13 @@ class Vic3Logic:
                 closest_name = name
         return closest_name
 
-    def create_country_files(self, tag, name, adjective, capital, gov_type, color_rgb, cultures, religion):
+    def create_country_files(self, tag, name, adjective, capital, gov_type, color_rgb, cultures_list, religion, tier, country_type, old_tag):
         self.log(f"[GEN] Creating core files for {tag} ({name})...")
         r_i, g_i, b_i = int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2])
         flag_color_name = self.get_nearest_vic3_color((r_i, g_i, b_i))
         self.log(f"   [COLOR] Mapped selection {color_rgb} to flag color: '{flag_color_name}'")
+
+        cultures_str = " ".join(cultures_list)
 
         # Definition
         def_dir = os.path.join(self.mod_path, "common/country_definitions")
@@ -117,11 +220,11 @@ class Vic3Logic:
         def_file = os.path.join(def_dir, f"99_auto_{tag.lower()}.txt")
         def_content = f"""{tag} = {{
     color = {{ {r_i} {g_i} {b_i} }}
-    country_type = recognized
-    tier = kingdom
-    capital_state = {capital}
-    cultures = {{ {cultures} }}
+    country_type = {country_type}
+    tier = {tier}
+    cultures = {{ {cultures_str} }}
     religion = {religion}
+    capital = {capital}
 }}
 """
         with open(def_file, 'w', encoding='utf-8-sig') as f: f.write(def_content)
@@ -142,19 +245,23 @@ class Vic3Logic:
         os.makedirs(hist_dir, exist_ok=True)
         hist_file = os.path.join(hist_dir, f"{tag} - {name}.txt")
         laws = """
-    set_active_law = law_monarchy
-    set_active_law = law_autocracy
-    set_active_law = law_peasant_levies
-    set_active_law = law_land_tax
+    activate_law = law_monarchy
+    activate_law = law_autocracy
+    activate_law = law_peasant_levies
+    activate_law = law_land_tax
 """ if gov_type == "monarchy" else """
-    set_active_law = law_presidential_republic
-    set_active_law = law_census_voting
-    set_active_law = law_national_militia
-    set_active_law = law_per_capita_tax
+    activate_law = law_presidential_republic
+    activate_law = law_census_voting
+    activate_law = law_national_militia
+    activate_law = law_per_capita_tax
 """
         ig_ruler = "ig_landowners" if gov_type == "monarchy" else "ig_intelligentsia"
+
+        tech_tier = self.get_tech_tier_from_history(old_tag)
+        if not tech_tier: tech_tier = "effect_starting_technology_tier_1_tech = yes"
+
         hist_content = f"""c:{tag} = {{
-    effect_starting_technology_tier_1_tech = yes
+    {tech_tier}
     set_tax_level = medium
     {laws}
     create_character = {{
@@ -167,6 +274,23 @@ class Vic3Logic:
 }}
 """
         with open(hist_file, 'w', encoding='utf-8-sig') as f: f.write(hist_content)
+
+        # Population History
+        pop_dir = os.path.join(self.mod_path, "common/history/population")
+        os.makedirs(pop_dir, exist_ok=True)
+        pop_file = os.path.join(pop_dir, f"{tag} - {name}.txt")
+
+        pop_effects = self.get_pop_history_data(old_tag)
+        if not pop_effects:
+             pop_effects = "effect_starting_pop_wealth_medium = yes\n\t\teffect_starting_pop_literacy_medium = yes"
+
+        pop_content = f"""POPULATION = {{
+    c:{tag} = {{
+        {pop_effects}
+    }}
+}}
+"""
+        with open(pop_file, 'w', encoding='utf-8-sig') as f: f.write(pop_content)
 
         # Flag
         flag_dir = os.path.join(self.mod_path, "common/coat_of_arms/coat_of_arms")
@@ -273,7 +397,7 @@ class Vic3Logic:
         if manowar > 0:
             units_block += f"""
                 combat_unit = {{
-                    type = unit_type:combat_unit_type_man_of_war
+                    type = unit_type:combat_unit_type_man_o_war
                     state_region = s:{final_state}
                     count = {manowar}
                 }}"""
@@ -688,6 +812,11 @@ class App(tk.Tk):
         self.style.configure('TRadiobutton', background=BG_COLOR, foreground=FG_COLOR)
         self.style.map('TRadiobutton', background=[('active', BG_COLOR)], indicatorcolor=[('selected', ACCENT_COLOR)])
 
+        # Combobox colors - Force black text for readability
+        self.option_add('*TCombobox*Listbox.foreground', 'black')
+        self.option_add('*TCombobox*Listbox.background', 'white')
+        self.style.configure('TCombobox', foreground='black', fieldbackground='white', background='white')
+
     def load_config(self):
         try:
             if os.path.exists("config.json"):
@@ -757,10 +886,10 @@ class App(tk.Tk):
         self.mode = "TRANSFER"
         f = ttk.LabelFrame(self.content_frame, text="Transfer States Mode", padding=15)
         f.pack(fill=tk.X)
-        ttk.Label(f, text="Old Owner Tag (e.g. FRA):").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Label(f, text="Old Owner Tag (e.g. fra):").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.tr_old_tag = tk.StringVar()
         ttk.Entry(f, textvariable=self.tr_old_tag, width=15).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-        ttk.Label(f, text="New Owner Tag (e.g. GBR):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(f, text="New Owner Tag (e.g. gbr):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.tr_new_tag = tk.StringVar()
         ttk.Entry(f, textvariable=self.tr_new_tag, width=15).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
         ttk.Label(f, text="States (Space separated):").grid(row=2, column=0, sticky=tk.NW, pady=8)
@@ -774,46 +903,142 @@ class App(tk.Tk):
     def show_create_ui(self):
         self.clear_content()
         self.mode = "CREATE"
+
+        all_cultures, all_religions, all_tiers, all_types = self.logic.scan_definitions_for_options()
+
+        if not all_tiers: all_tiers = ["empire", "kingdom", "grand_principality", "principality", "city_state"]
+        if not all_types: all_types = ["recognized", "unrecognized", "colonial"]
+
         f = ttk.LabelFrame(self.content_frame, text="Create Country Mode", padding=15)
         f.pack(fill=tk.X)
+
+        # Row 0
         ttk.Label(f, text="New Country Tag (3 chars):").grid(row=0, column=0, sticky=tk.W, pady=5)
         self.cr_tag = tk.StringVar()
         ttk.Entry(f, textvariable=self.cr_tag, width=10).grid(row=0, column=1, sticky=tk.W, pady=5)
-        ttk.Label(f, text="Country Name:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.cr_name = tk.StringVar()
-        ttk.Entry(f, textvariable=self.cr_name, width=25).grid(row=1, column=1, sticky=tk.W, pady=5)
-        ttk.Label(f, text="Adjective (e.g. Newlandian):").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.cr_adj = tk.StringVar()
-        ttk.Entry(f, textvariable=self.cr_adj, width=25).grid(row=2, column=1, sticky=tk.W, pady=5)
-        ttk.Label(f, text="Taken From (Old Owner Tag):").grid(row=3, column=0, sticky=tk.W, pady=5)
-        self.cr_old_owner = tk.StringVar()
-        ttk.Entry(f, textvariable=self.cr_old_owner, width=10).grid(row=3, column=1, sticky=tk.W, pady=5)
-        ttk.Label(f, text="(Required to transfer land)").grid(row=3, column=2, sticky=tk.W, padx=5)
-        
-        # Capital
-        ttk.Label(f, text="Capital State ID:").grid(row=0, column=3, sticky=tk.W, padx=15, pady=5)
-        self.cr_capital = tk.StringVar()
-        ttk.Entry(f, textvariable=self.cr_capital, width=20).grid(row=0, column=4, sticky=tk.W, pady=5)
-        
-        # Others
-        ttk.Label(f, text="Other States (Space sep.):").grid(row=1, column=3, sticky=tk.NW, padx=15, pady=5)
-        self.cr_others = tk.Text(f, height=3, width=20, bg="#424242", fg="#ECEFF1", insertbackground="white", relief="flat")
-        self.cr_others.grid(row=1, column=4, rowspan=2, sticky=tk.W, pady=5)
-        
-        # Full Annex Checkbox
-        self.cr_annex = tk.BooleanVar()
-        ttk.Checkbutton(f, text="Full Annexation (Auto-detect all states)", variable=self.cr_annex).grid(row=3, column=3, columnspan=2, sticky=tk.W, padx=15)
 
-        ttk.Label(f, text="Government Type:").grid(row=4, column=0, sticky=tk.W, pady=10)
+        ttk.Label(f, text="Country Name:").grid(row=0, column=2, sticky=tk.W, pady=5, padx=10)
+        self.cr_name = tk.StringVar()
+        ttk.Entry(f, textvariable=self.cr_name, width=25).grid(row=0, column=3, sticky=tk.W, pady=5)
+
+        # Row 1
+        ttk.Label(f, text="Adjective:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.cr_adj = tk.StringVar()
+        ttk.Entry(f, textvariable=self.cr_adj, width=25).grid(row=1, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(f, text="Taken From (Old Tag):").grid(row=1, column=2, sticky=tk.W, pady=5, padx=10)
+        self.cr_old_owner = tk.StringVar()
+        e_old = ttk.Entry(f, textvariable=self.cr_old_owner, width=10)
+        e_old.grid(row=1, column=3, sticky=tk.W, pady=5)
+        e_old.bind("<FocusOut>", self.on_old_owner_change)
+        
+        # Row 2
+        ttk.Label(f, text="Capital State (e.g. aquitaine):").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.cr_capital = tk.StringVar()
+        ttk.Entry(f, textvariable=self.cr_capital, width=25).grid(row=2, column=1, sticky=tk.W, pady=5)
+        
+        self.cr_annex = tk.BooleanVar()
+        ttk.Checkbutton(f, text="Full Annexation", variable=self.cr_annex).grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=10)
+
+        # Row 3
+        ttk.Label(f, text="Tier:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.cr_tier = tk.StringVar(value="principality")
+        ttk.Combobox(f, textvariable=self.cr_tier, values=all_tiers, state="readonly").grid(row=3, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(f, text="Type:").grid(row=3, column=2, sticky=tk.W, pady=5, padx=10)
+        self.cr_type = tk.StringVar(value="recognized")
+        ttk.Combobox(f, textvariable=self.cr_type, values=all_types, state="readonly").grid(row=3, column=3, sticky=tk.W, pady=5)
+
+        # Row 4
+        ttk.Label(f, text="Gov Type:").grid(row=4, column=0, sticky=tk.W, pady=5)
         self.cr_gov = tk.StringVar(value="monarchy")
-        ttk.Radiobutton(f, text="Monarchy", variable=self.cr_gov, value="monarchy").grid(row=4, column=1, sticky=tk.W)
-        ttk.Radiobutton(f, text="Republic", variable=self.cr_gov, value="republic").grid(row=4, column=2, sticky=tk.W)
-        ttk.Label(f, text="Map/Flag Color:").grid(row=5, column=0, sticky=tk.W, pady=5)
+        f_gov = ttk.Frame(f); f_gov.grid(row=4, column=1, sticky=tk.W)
+        ttk.Radiobutton(f_gov, text="Monarchy", variable=self.cr_gov, value="monarchy").pack(side=tk.LEFT)
+        ttk.Radiobutton(f_gov, text="Republic", variable=self.cr_gov, value="republic").pack(side=tk.LEFT)
+
+        ttk.Button(f, text="Pick Color", command=self.pick_color).grid(row=4, column=2, sticky=tk.W, padx=10)
         self.color_preview = tk.Label(f, text="     ", bg=self._rgb_to_hex(self.cr_rgb), relief="solid", borderwidth=1)
-        self.color_preview.grid(row=5, column=1, sticky=tk.W, pady=5, padx=5)
-        ttk.Button(f, text="Pick Color", command=self.pick_color).grid(row=5, column=2, sticky=tk.W, pady=5)
+        self.color_preview.grid(row=4, column=3, sticky=tk.W)
+
+        # Row 5: Cultures
+        self.all_cultures_data = all_cultures
+        f_cult = ttk.LabelFrame(f, text="Cultures (Defaults to old tag's default culture)", padding=5)
+        f_cult.grid(row=5, column=0, columnspan=2, sticky=tk.NSEW, pady=5)
+
+        self.cr_cult_search = tk.StringVar()
+        self.cb_cultures = ttk.Combobox(f_cult, textvariable=self.cr_cult_search, values=all_cultures)
+        self.cb_cultures.pack(fill=tk.X)
+        self.cb_cultures.bind("<<ComboboxSelected>>", self.add_culture_from_combo)
+        self.cb_cultures.bind("<KeyRelease>", self.filter_culture_options)
+
+        self.lb_cultures = tk.Listbox(f_cult, height=4, bg="#424242", fg="#ECEFF1", selectmode=tk.SINGLE)
+        self.lb_cultures.pack(fill=tk.BOTH, expand=True, pady=2)
+
+        ttk.Button(f_cult, text="Remove Selected", command=self.remove_culture).pack(fill=tk.X)
+        self.selected_cultures = []
+
+        # Row 5: Religion
+        f_rel = ttk.LabelFrame(f, text="Religion (Defaults to old tag's default religion)", padding=5)
+        f_rel.grid(row=5, column=2, columnspan=2, sticky=tk.NSEW, pady=5, padx=5)
+
+        canvas = tk.Canvas(f_rel, bg="#212121", height=100)
+        scrollbar = ttk.Scrollbar(f_rel, orient="vertical", command=canvas.yview)
+        self.scrollable_rel_frame = ttk.Frame(canvas)
+
+        self.scrollable_rel_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=self.scrollable_rel_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.cr_religion = tk.StringVar()
+        for r in all_religions:
+            ttk.Radiobutton(self.scrollable_rel_frame, text=r, variable=self.cr_religion, value=r).pack(anchor=tk.W)
+
+        # Row 6
+        ttk.Label(f, text="Other States (Space sep.):").grid(row=6, column=0, sticky=tk.NW, pady=5)
+        self.cr_others = tk.Text(f, height=3, width=40, bg="#424242", fg="#ECEFF1", insertbackground="white", relief="flat")
+        self.cr_others.grid(row=6, column=1, columnspan=3, sticky=tk.W, pady=5)
+
         self.run_btn.config(text="Create & Transfer", command=self.start_create)
+
+    def on_old_owner_change(self, event):
+        # User requested to NOT populate the UI boxes automatically to keep them blank.
+        # The background logic in start_create will handle defaults if these remain empty.
+        pass
     
+    def filter_culture_options(self, event):
+        typed = self.cr_cult_search.get().strip().lower()
+        if not typed:
+            self.cb_cultures['values'] = self.all_cultures_data
+        else:
+            filtered = [c for c in self.all_cultures_data if c.lower().startswith(typed)]
+            self.cb_cultures['values'] = filtered
+
+            # Optional: Open the dropdown if there are matches (can be intrusive, but user requested 'visible')
+            # if filtered:
+            #     self.cb_cultures.event_generate('<Down>')
+
+    def add_culture_from_combo(self, event):
+        val = self.cr_cult_search.get()
+        self.add_culture(val)
+        self.cr_cult_search.set("")
+        self.cb_cultures['values'] = self.all_cultures_data
+
+    def add_culture(self, culture):
+        if culture and culture not in self.selected_cultures:
+            self.selected_cultures.append(culture)
+            self.lb_cultures.insert(tk.END, culture)
+
+    def remove_culture(self):
+        sel = self.lb_cultures.curselection()
+        if sel:
+            idx = sel[0]
+            val = self.lb_cultures.get(idx)
+            self.selected_cultures.remove(val)
+            self.lb_cultures.delete(idx)
+
     # --- MODE 3: CREATE ARMY ---
     def show_army_ui(self):
         self.clear_content()
@@ -940,13 +1165,34 @@ class App(tk.Tk):
         gov = self.cr_gov.get()
         rgb = self.cr_rgb
         is_annex = self.cr_annex.get()
+
+        tier = self.cr_tier.get()
+        country_type = self.cr_type.get()
+        cultures = self.selected_cultures
+        religion = self.cr_religion.get()
+
         if not tag or not name or not old_owner: return messagebox.showerror("Error", "Tag, Name, and Old Owner are required.")
         if not is_annex and not capital: return messagebox.showerror("Error", "Capital State ID required unless Full Annexation.")
         if len(tag) != 3: return messagebox.showerror("Error", "Tag must be exactly 3 characters.")
+
+        # If not manually selected, default to old owner's data
+        if not cultures:
+            data = self.logic.get_country_data(old_owner)
+            if data["cultures"]:
+                cultures = data["cultures"].split()
+
+        if not religion:
+            data = self.logic.get_country_data(old_owner)
+            if data["religion"]:
+                religion = data["religion"]
+
+        if not cultures: return messagebox.showerror("Error", "At least one culture required.")
+        if not religion: return messagebox.showerror("Error", "Religion required.")
+
         self.is_processing = True
         self.run_btn.config(state='disabled')
         self.log_area.config(state='normal'); self.log_area.delete('1.0', tk.END); self.log_area.config(state='disabled')
-        threading.Thread(target=self.run_create_logic, args=(tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex), daemon=True).start()
+        threading.Thread(target=self.run_create_logic, args=(tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type), daemon=True).start()
 
     def start_create_army(self):
         if self.is_processing: return
@@ -1006,18 +1252,15 @@ class App(tk.Tk):
             self.is_processing = False
             self.after(0, lambda: self.run_btn.config(state='normal'))
 
-    def run_create_logic(self, tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex):
+    def run_create_logic(self, tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type):
         try:
             self.log_message(f"--- Creating Country: {tag} ({name}) ---", 'info')
             if self.logic.tag_exists(tag):
                 self.log_message(f"[ERROR] Tag {tag} already exists in common/country_definitions!", 'error')
                 return
+
+            # (Old owner data logic is now partly in UI for prepopulation, but we still need capital logic if annexing)
             data = self.logic.get_country_data(old_owner)
-            cult, rel = data["cultures"], data["religion"]
-            if cult == "british" and rel == "protestant":
-                self.log_message(f"[INFO] Old owner data not found in mod. Using defaults (British/Prot).", 'warn')
-            else:
-                self.log_message(f"[INFO] Inherited Culture: {cult}, Religion: {rel}")
             
             all_states = []
             if is_annex:
@@ -1043,7 +1286,7 @@ class App(tk.Tk):
                 others = [self.logic.format_state_clean(s) for s in others_raw.split() if s.strip()]
                 all_states = [capital] + others
 
-            self.logic.create_country_files(tag, name, adj, capital, gov, rgb, cult, rel)
+            self.logic.create_country_files(tag, name, adj, capital, gov, rgb, cultures, religion, tier, country_type, old_owner)
             
             self.log_message("--- Transferring Land & Units ---", 'info')
             self.execute_transfer_core(all_states, old_owner, tag)
