@@ -938,7 +938,7 @@ class App(tk.Tk):
         ttk.Entry(f, textvariable=self.cr_capital, width=25).grid(row=2, column=1, sticky=tk.W, pady=5)
         
         self.cr_annex = tk.BooleanVar()
-        ttk.Checkbutton(f, text="Full Annexation", variable=self.cr_annex).grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=10)
+        ttk.Checkbutton(f, text="Full Annexation", variable=self.cr_annex, command=self.toggle_annex_ui).grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=10)
 
         # Row 3
         ttk.Label(f, text="Tier:").grid(row=3, column=0, sticky=tk.W, pady=5)
@@ -997,11 +997,20 @@ class App(tk.Tk):
             ttk.Radiobutton(self.scrollable_rel_frame, text=r, variable=self.cr_religion, value=r).pack(anchor=tk.W)
 
         # Row 6
-        ttk.Label(f, text="Other States (Space sep.):").grid(row=6, column=0, sticky=tk.NW, pady=5)
+        self.lbl_others = ttk.Label(f, text="Other States (Space sep.):\n(Must be states owned by the old tag)")
+        self.lbl_others.grid(row=6, column=0, sticky=tk.NW, pady=5)
         self.cr_others = tk.Text(f, height=3, width=40, bg="#424242", fg="#ECEFF1", insertbackground="white", relief="flat")
         self.cr_others.grid(row=6, column=1, columnspan=3, sticky=tk.W, pady=5)
 
         self.run_btn.config(text="Create & Transfer", command=self.start_create)
+
+    def toggle_annex_ui(self):
+        if self.cr_annex.get():
+            self.lbl_others.grid_remove()
+            self.cr_others.grid_remove()
+        else:
+            self.lbl_others.grid()
+            self.cr_others.grid()
 
     def on_old_owner_change(self, event):
         # User requested to NOT populate the UI boxes automatically to keep them blank.
