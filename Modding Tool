@@ -920,10 +920,10 @@ class Vic3Logic:
                     except:
                         with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
 
-                    m_name = re.search(r'^\s*' + re.escape(tag) + r':\d?\s*"(.*)"', content, re.MULTILINE)
+                    m_name = re.search(r'^\s*' + re.escape(tag) + r':\d?\s*"(.*)"', content, re.MULTILINE | re.IGNORECASE)
                     if m_name: n = m_name.group(1)
 
-                    m_adj = re.search(r'^\s*' + re.escape(tag) + r'_ADJ:\d?\s*"(.*)"', content, re.MULTILINE)
+                    m_adj = re.search(r'^\s*' + re.escape(tag) + r'_ADJ:\d?\s*"(.*)"', content, re.MULTILINE | re.IGNORECASE)
                     if m_adj: a = m_adj.group(1)
             return n, a
 
@@ -935,14 +935,53 @@ class Vic3Logic:
         loc_dir = os.path.join(self.mod_path, "localization", "english")
         rep_dir = os.path.join(loc_dir, "replace")
         os.makedirs(rep_dir, exist_ok=True)
-        filename = os.path.join(rep_dir, f"{tag.lower()}_l_english.yml")
-        content = f"""l_english:
- {tag}: "{name}"
- {tag}_ADJ: "{adj}"
- {tag}_DEF: "{name}"
-"""
-        with open(filename, 'w', encoding='utf-8-sig') as f: f.write(content)
-        self.log(f"[SAVE] Localization saved to {filename}", 'success')
+
+        # Check if a replace file for this tag already exists to append/modify
+        target_file = None
+        for root, _, files in os.walk(rep_dir):
+            for file in files:
+                if not file.endswith(".yml"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                if re.search(r"^\s*" + re.escape(tag) + r":", content, re.MULTILINE):
+                    target_file = path
+                    break
+            if target_file: break
+
+        if not target_file:
+            target_file = os.path.join(rep_dir, f"{tag.lower()}_l_english.yml")
+            if not os.path.exists(target_file):
+                 with open(target_file, 'w', encoding='utf-8-sig') as f: f.write("l_english:\n")
+
+        try:
+            with open(target_file, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+            with open(target_file, 'r', encoding='utf-8') as f: content = f.read()
+
+        # Update Name
+        if re.search(r"^\s*" + re.escape(tag) + r":", content, re.MULTILINE):
+            content = re.sub(r'^\s*' + re.escape(tag) + r':.*', f' {tag}: "{name}"', content, flags=re.MULTILINE)
+        else:
+            content += f' {tag}: "{name}"\n'
+
+        # Update Adjective
+        if re.search(r"^\s*" + re.escape(tag) + r"_ADJ:", content, re.MULTILINE):
+            content = re.sub(r'^\s*' + re.escape(tag) + r'_ADJ:.*', f' {tag}_ADJ: "{adj}"', content, flags=re.MULTILINE)
+        else:
+            content += f' {tag}_ADJ: "{adj}"\n'
+
+        # Update Def
+        if re.search(r"^\s*" + re.escape(tag) + r"_DEF:", content, re.MULTILINE):
+            content = re.sub(r'^\s*' + re.escape(tag) + r'_DEF:.*', f' {tag}_DEF: "{name}"', content, flags=re.MULTILINE)
+        else:
+            content += f' {tag}_DEF: "{name}"\n'
+
+        with open(target_file, 'w', encoding='utf-8-sig') as f: f.write(content)
+        self.log(f"[SAVE] Localization saved to {target_file}", 'success')
 
     def load_country_definition_data(self, tag):
         def_path = os.path.join(self.mod_path, "common", "country_definitions")
@@ -999,13 +1038,10 @@ class Vic3Logic:
                 with open(filepath, 'w', encoding='utf-8-sig') as f: f.write(content)
                 self.log(f"[SAVE] Updated definitions in {filepath}", 'success')
 
-    def load_country_history_details(self, tag):
-        hist_dir = os.path.join(self.mod_path, "common", "history", "countries")
-        info = { "gov_type": "monarchy", "laws": [], "ruler": {"first": "", "last": "", "ig": "", "ideology": ""} }
-        if not os.path.exists(hist_dir): return info
-        clean_tag = tag.replace("c:", "").strip()
-        target_files = []
-        for root, _, files in os.walk(hist_dir):
+    def load_character_template(self, template_name):
+        tmpl_dir = os.path.join(self.mod_path, "common", "character_templates")
+        if not os.path.exists(tmpl_dir): return None
+        for root, _, files in os.walk(tmpl_dir):
             for file in files:
                 if not file.endswith(".txt"): continue
                 path = os.path.join(root, file)
@@ -1013,40 +1049,172 @@ class Vic3Logic:
                     with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
                 except:
                     with open(path, 'r', encoding='utf-8') as f: content = f.read()
-                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content): target_files.append((path, content))
 
-        for path, content in target_files:
-            idx = 0
-            while True:
-                s, e = self.get_block_range_safe(content, f"c:{clean_tag}", idx)
-                if not s: break
-                block = content[s:e]
-                laws = re.findall(r"activate_law\s*=\s*([A-Za-z0-9_:]+)", block)
-                info["laws"].extend(laws)
+                # Search for template = { ... }
+                # Using regex to find start, then block helper
+                m = re.search(r"(^|\s)" + re.escape(template_name) + r"\s*=\s*\{", content, re.IGNORECASE)
+                if m:
+                    start = m.end() - 1
+                    _, end = self.find_block_content(content, start)
+                    if end:
+                        block = content[start:end]
+                        data = {"first": "", "last": "", "ig": "", "ideology": "", "is_ruler": False}
+                        if re.search(r"ruler\s*=\s*yes", block, re.IGNORECASE): data["is_ruler"] = True
 
-                char_idx = 0
-                while True:
-                    m = re.search(r"create_character\s*=\s*\{", block[char_idx:])
-                    if not m: break
-                    abs_start = char_idx + m.start()
-                    bs, be = self.find_block_content(block, abs_start + m.end() - 1)
-                    if bs:
-                        char_block = block[bs:be]
-                        if "ruler = yes" in char_block:
-                            fn = re.search(r'first_name\s*=\s*"([^"]+)"', char_block)
-                            ln = re.search(r'last_name\s*=\s*"([^"]+)"', char_block)
-                            ig = re.search(r'interest_group\s*=\s*([A-Za-z0-9_]+)', char_block)
-                            ideo = re.search(r'trait\s*=\s*(ideology_[A-Za-z0-9_]+)', char_block)
-                            if fn: info["ruler"]["first"] = fn.group(1)
-                            if ln: info["ruler"]["last"] = ln.group(1)
-                            if ig: info["ruler"]["ig"] = ig.group(1)
-                            if ideo: info["ruler"]["ideology"] = ideo.group(1)
-                        char_idx = be
-                    else: break
-                idx = e
+                        fn = re.search(r'first_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', block)
+                        if fn: data["first"] = fn.group(1) if fn.group(1) else fn.group(2)
+
+                        ln = re.search(r'last_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', block)
+                        if ln: data["last"] = ln.group(1) if ln.group(1) else ln.group(2)
+
+                        ig = re.search(r'interest_group\s*=\s*([A-Za-z0-9_]+)', block)
+                        if ig: data["ig"] = ig.group(1)
+
+                        ideo = re.search(r'(trait|ideology)\s*=\s*(ideology_[A-Za-z0-9_]+)', block)
+                        if ideo: data["ideology"] = ideo.group(2)
+
+                        return data
+        return None
+
+    def load_country_history_details(self, tag):
+        info = { "gov_type": "monarchy", "laws": [], "ruler": {"first": "", "last": "", "ig": "", "ideology": ""} }
+        clean_tag = tag.replace("c:", "").strip()
+
+        # 1. Load Laws/Gov from history/countries
+        hist_dir = os.path.join(self.mod_path, "common", "history", "countries")
+        if os.path.exists(hist_dir):
+            for root, _, files in os.walk(hist_dir):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    path = os.path.join(root, file)
+                    try:
+                        with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                    idx = 0
+                    while True:
+                        s, e = self.get_block_range_safe(content, f"c:{clean_tag}", idx)
+                        if not s: break
+                        block = content[s:e]
+                        laws = re.findall(r"activate_law\s*=\s*([A-Za-z0-9_:]+)", block)
+                        info["laws"].extend(laws)
+
+                        # Also check for inline rulers here (legacy/simple mod support)
+                        char_idx = 0
+                        while True:
+                            m = re.search(r"create_character\s*=\s*\{", block[char_idx:], re.IGNORECASE)
+                            if not m: break
+                            abs_start = char_idx + m.start()
+                            bs, be = self.find_block_content(block, abs_start + m.end() - 1)
+                            if bs:
+                                char_block = block[bs:be]
+                                if re.search(r"ruler\s*=\s*yes", char_block, re.IGNORECASE):
+                                    fn = re.search(r'first_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', char_block)
+                                    ln = re.search(r'last_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', char_block)
+                                    ig = re.search(r'interest_group\s*=\s*([A-Za-z0-9_]+)', char_block)
+                                    ideo = re.search(r'trait\s*=\s*(ideology_[A-Za-z0-9_]+)', char_block)
+                                    if fn: info["ruler"]["first"] = fn.group(1) if fn.group(1) else fn.group(2)
+                                    if ln: info["ruler"]["last"] = ln.group(1) if ln.group(1) else ln.group(2)
+                                    if ig: info["ruler"]["ig"] = ig.group(1)
+                                    if ideo: info["ruler"]["ideology"] = ideo.group(1)
+                                char_idx = be
+                            else: break
+                        idx = e
+
+        # 2. Check history/characters for templates (Overwrites inline if found)
+        char_hist_dir = os.path.join(self.mod_path, "common", "history", "characters")
+        if os.path.exists(char_hist_dir):
+            for root, _, files in os.walk(char_hist_dir):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    path = os.path.join(root, file)
+                    try:
+                        with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                    idx = 0
+                    while True:
+                        s, e = self.get_block_range_safe(content, f"c:{clean_tag}", idx)
+                        if not s: break
+                        block = content[s:e]
+
+                        # Scan for create_character with templates
+                        c_cursor = 0
+                        while True:
+                            m = re.search(r"create_character\s*=\s*\{", block[c_cursor:], re.IGNORECASE)
+                            if not m: break
+                            start = c_cursor + m.start()
+                            bs, be = self.find_block_content(block, start + m.end() - 1)
+                            if bs:
+                                inner = block[bs:be]
+                                tmpl_match = re.search(r"template\s*=\s*([A-Za-z0-9_.-]+)", inner, re.IGNORECASE)
+                                if tmpl_match:
+                                    template_name = tmpl_match.group(1)
+                                    t_data = self.load_character_template(template_name)
+                                    if t_data and t_data["is_ruler"]:
+                                        info["ruler"]["first"] = t_data["first"]
+                                        info["ruler"]["last"] = t_data["last"]
+                                        info["ruler"]["ig"] = t_data["ig"]
+                                        info["ruler"]["ideology"] = t_data["ideology"]
+                                c_cursor = be
+                            else: break
+                        idx = e
 
         # Normalize laws
         info["laws"] = [l.replace("law_type:", "") for l in info["laws"]]
+
+        # 3. Fallback: Check character_templates directly for "country_tag" file if no ruler found yet
+        # (This handles cases where history files are hard to parse or missing, but templates exist)
+        if not info["ruler"]["first"]:
+            tmpl_dir = os.path.join(self.mod_path, "common", "character_templates")
+            if os.path.exists(tmpl_dir):
+                target_fname = f"country_{clean_tag}"
+                for root, _, files in os.walk(tmpl_dir):
+                    for file in files:
+                        if not file.endswith(".txt"): continue
+                        # loose match for filename
+                        if target_fname.lower() in file.lower() or clean_tag.lower() in file.lower():
+                            path = os.path.join(root, file)
+                            try:
+                                with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                            except:
+                                with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                            # Scan all top-level blocks
+                            cursor = 0
+                            while cursor < len(content):
+                                # Find start of a block: KEY = {
+                                m = re.search(r"([A-Za-z0-9_.-]+)\s*=\s*\{", content[cursor:])
+                                if not m: break
+                                start = cursor + m.start()
+                                bs, be = self.find_block_content(content, start + m.end() - 1)
+                                if bs:
+                                    block_inner = content[bs:be]
+                                    if re.search(r"ruler\s*=\s*yes", block_inner, re.IGNORECASE):
+                                        # Found a ruler definition!
+                                        fn = re.search(r'first_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', block_inner)
+                                        if fn: info["ruler"]["first"] = fn.group(1) if fn.group(1) else fn.group(2)
+
+                                        ln = re.search(r'last_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', block_inner)
+                                        if ln: info["ruler"]["last"] = ln.group(1) if ln.group(1) else ln.group(2)
+
+                                        ig = re.search(r'interest_group\s*=\s*([A-Za-z0-9_]+)', block_inner)
+                                        if ig: info["ruler"]["ig"] = ig.group(1)
+
+                                        ideo = re.search(r'(trait|ideology)\s*=\s*(ideology_[A-Za-z0-9_]+)', block_inner)
+                                        if ideo: info["ruler"]["ideology"] = ideo.group(2)
+
+                                        # Stop after finding the first ruler in the file
+                                        break
+                                    cursor = be
+                                else:
+                                    # Should not happen if well formed, but skip forward
+                                    cursor = start + 1
+
+                            if info["ruler"]["first"]: break
+                    if info["ruler"]["first"]: break
 
         if "law_monarchy" in info["laws"]: info["gov_type"] = "monarchy"
         elif "law_presidential_republic" in info["laws"] or "law_parliamentary_republic" in info["laws"]: info["gov_type"] = "republic"
@@ -1117,14 +1285,29 @@ class Vic3Logic:
             else: break
 
         if ruler_start != -1:
+            # Update existing inline ruler
             rb = new_block[ruler_start:ruler_end]
-            if ruler_info["first"]: rb = re.sub(r'first_name\s*=\s*"[^"]+"', f'first_name = "{ruler_info["first"]}"', rb)
-            if ruler_info["last"]: rb = re.sub(r'last_name\s*=\s*"[^"]+"', f'last_name = "{ruler_info["last"]}"', rb)
+            if ruler_info["first"]: rb = re.sub(r'first_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', f'first_name = "{ruler_info["first"]}"', rb)
+            if ruler_info["last"]: rb = re.sub(r'last_name\s*=\s*(?:"([^"]+)"|([^\s#]+))', f'last_name = "{ruler_info["last"]}"', rb)
             if ruler_info["ig"]: rb = re.sub(r'interest_group\s*=\s*[A-Za-z0-9_]+', f'interest_group = {ruler_info["ig"]}', rb)
             if ruler_info["ideology"]:
                 rb = re.sub(r'\s*trait\s*=\s*ideology_[a-z_]+', '', rb)
                 rb = rb.rstrip("} \t\n") + f"\n\t\ttrait = {ruler_info['ideology']}\n\t}}"
             new_block = new_block[:ruler_start] + rb + new_block[ruler_end:]
+        else:
+            # Create new ruler block if none found (overrides/adds to vanilla)
+            # Default birth_date needed if creating fresh
+            new_ruler_block = f"""
+        create_character = {{
+            first_name = "{ruler_info['first']}"
+            last_name = "{ruler_info['last']}"
+            birth_date = 1800.1.1
+            ruler = yes
+            interest_group = {ruler_info['ig']}
+            trait = {ruler_info['ideology']}
+        }}"""
+            # Insert before closing brace of country block
+            new_block = new_block.rstrip("} \t\n") + new_ruler_block + "\n\t}"
 
         target_content = target_content[:s] + new_block + target_content[e:]
         with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(target_content)
@@ -1536,7 +1719,7 @@ class App(tk.Tk):
         ttk.Button(nav_frame, text="Create Country", command=self.show_create_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Army", command=self.show_army_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Navy", command=self.show_navy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(nav_frame, text="Mod Country", command=self.show_country_mod_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(nav_frame, text="Modify Country", command=self.show_country_mod_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Diplomacy", command=self.show_diplomacy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         # 3. Dynamic Content
