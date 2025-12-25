@@ -37,7 +37,7 @@ class Vic3Logic:
         """Checks if a country tag already exists in common/country_definitions."""
         def_path = os.path.join(self.mod_path, "common/country_definitions")
         if not os.path.exists(def_path): return False
-        
+
         for root, _, files in os.walk(def_path):
             for file in files:
                 if not file.endswith(".txt"): continue
@@ -45,7 +45,7 @@ class Vic3Logic:
                     with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
                 except:
                     with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
-                
+
                 if re.search(r"^\s*" + re.escape(tag) + r"\s*=", content, re.MULTILINE):
                     return True
         return False
@@ -98,12 +98,12 @@ class Vic3Logic:
     def get_country_data(self, tag):
         """Attempts to find culture, religion, and capital of a tag."""
         data = { "cultures": None, "religion": None, "capital": None }
-        
+
         def_path = os.path.join(self.mod_path, "common/country_definitions")
         if not os.path.exists(def_path): return data
 
         clean_tag = tag.replace("c:", "").strip()
-        
+
         for root, _, files in os.walk(def_path):
             for file in files:
                 if not file.endswith(".txt"): continue
@@ -116,13 +116,13 @@ class Vic3Logic:
                 if match:
                     start_brace = match.end() - 1
                     _, end_brace = self.find_block_content(content, start_brace)
-                    
+
                     if end_brace:
                         block_content = content[start_brace:end_brace]
-                        
+
                         cul_match = re.search(r"cultures\s*=\s*\{([^}]+)\}", block_content)
                         if cul_match: data["cultures"] = cul_match.group(1).strip()
-                        
+
                         rel_match = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", block_content)
                         if rel_match: data["religion"] = rel_match.group(1).strip()
 
@@ -153,7 +153,7 @@ class Vic3Logic:
                     # Found start of culture block. Find the block content.
                     start_brace = match.end() - 1
                     _, end_brace = self.find_block_content(content, start_brace)
-                    
+
                     if end_brace:
                         block = content[start_brace:end_brace]
                         rel_match = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", block)
@@ -454,7 +454,7 @@ class Vic3Logic:
                 self.log(f"   [LOC] Using Capital: {final_state}")
             else:
                 return None, None
-        
+
         hq_region = self.find_strategic_region(f"s:{final_state}")
         if not hq_region:
             hq_region = "sr:region_europe"
@@ -462,7 +462,7 @@ class Vic3Logic:
         else:
             if not hq_region.startswith("sr:"):
                 hq_region = f"sr:{hq_region}"
-                
+
         return final_state, hq_region
 
     def create_army_file(self, tag, army_name, target_state, inf, art, cav):
@@ -519,7 +519,7 @@ class Vic3Logic:
         """Creates a new navy history file."""
         self.log(f"[GEN] Creating Navy '{navy_name}' for {tag}...")
         self.log(f"   [WARN] Ensure {target_state if target_state else 'Capital'} is a COASTAL state!", 'warn')
-        
+
         final_state, hq_region = self._get_location_data(tag, target_state)
         if not final_state: return self.log("[ERROR] Aborting: Location unknown.", 'error')
 
@@ -572,7 +572,7 @@ class Vic3Logic:
         path = os.path.join(self.mod_path, "common/strategic_regions")
         if not os.path.exists(path): return None
         clean_key = state_key.replace("s:", "").upper()
-        
+
         for root, _, files in os.walk(path):
             if self.stop_event.is_set(): return None
             for file in files:
@@ -585,7 +585,7 @@ class Vic3Logic:
                         if clean_key in block.upper():
                             raw_name = block.split("=")[0].strip()
                             return f"region_{raw_name}"
-                except: 
+                except:
                     continue
         return None
 
@@ -596,13 +596,13 @@ class Vic3Logic:
             if text[i] == '{': break
             i += 1
         if i >= n: return None, None
-        
+
         start_brace = i
         i += 1
         depth = 1
         in_string = False
         in_comment = False
-        
+
         while i < n and depth > 0:
             char = text[i]
             if in_comment:
@@ -615,7 +615,7 @@ class Vic3Logic:
                 elif char == '{': depth += 1
                 elif char == '}': depth -= 1
             i += 1
-            
+
         if depth == 0: return start_brace, i
         return None, None
 
@@ -623,7 +623,7 @@ class Vic3Logic:
         pattern = re.compile(re.escape(start_pattern) + r"\s*(=|[\?]=)\s*\{", re.IGNORECASE)
         match = pattern.search(content, start_search_idx)
         if not match: return None, None
-        
+
         start_brace, end_brace = self.find_block_content(content, match.end() - 1)
         if start_brace is not None:
             return match.start(), end_brace
@@ -838,7 +838,7 @@ class Vic3Logic:
                 cursor = f_end
             processed_file_parts.append(header + "".join(new_inner_parts) + footer)
             last_idx = c_end
-            current_search_idx = c_end 
+            current_search_idx = c_end
         if not files_modified: return False
         new_file_content = "".join(processed_file_parts)
 
@@ -900,557 +900,6 @@ class Vic3Logic:
                     if not file.endswith(".txt"): continue
                     filepath = os.path.join(root, file)
                     self.process_military_extraction_multi_pass(filepath, old_tag, new_tag, region, state_list)
-
-    # --- COUNTRY MODIFICATION LOGIC ---
-    def load_country_localization(self, tag):
-        loc_dir = os.path.join(self.mod_path, "localization", "english")
-        if not os.path.exists(loc_dir): return "", ""
-
-        name = ""
-        adj = ""
-
-        def search_dir(directory):
-            n, a = "", ""
-            if not os.path.exists(directory): return "", ""
-            for root, _, files in os.walk(directory):
-                for file in files:
-                    if not file.endswith(".yml"): continue
-                    try:
-                        with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
-                    except:
-                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
-
-                    m_name = re.search(r'^\s*' + re.escape(tag) + r':\d?\s*"(.*)"', content, re.MULTILINE)
-                    if m_name: n = m_name.group(1)
-
-                    m_adj = re.search(r'^\s*' + re.escape(tag) + r'_ADJ:\d?\s*"(.*)"', content, re.MULTILINE)
-                    if m_adj: a = m_adj.group(1)
-            return n, a
-
-        n1, a1 = search_dir(loc_dir)
-        n2, a2 = search_dir(os.path.join(loc_dir, "replace"))
-        return (n2 if n2 else n1), (a2 if a2 else a1)
-
-    def save_country_localization(self, tag, name, adj):
-        loc_dir = os.path.join(self.mod_path, "localization", "english")
-        rep_dir = os.path.join(loc_dir, "replace")
-        os.makedirs(rep_dir, exist_ok=True)
-        filename = os.path.join(rep_dir, f"{tag.lower()}_l_english.yml")
-        content = f"""l_english:
- {tag}: "{name}"
- {tag}_ADJ: "{adj}"
- {tag}_DEF: "{name}"
-"""
-        with open(filename, 'w', encoding='utf-8-sig') as f: f.write(content)
-        self.log(f"[SAVE] Localization saved to {filename}", 'success')
-
-    def load_country_definition_data(self, tag):
-        def_path = os.path.join(self.mod_path, "common", "country_definitions")
-        if not os.path.exists(def_path): return None, None, None
-        clean_tag = tag.strip()
-        for root, _, files in os.walk(def_path):
-            for file in files:
-                if not file.endswith(".txt"): continue
-                path = os.path.join(root, file)
-                try:
-                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
-                except:
-                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
-                match = re.search(r"(^|\s)" + re.escape(clean_tag) + r"\s*=\s*\{", content, re.MULTILINE)
-                if match:
-                    start = match.end() - 1
-                    _, end = self.find_block_content(content, start)
-                    if end:
-                        block = content[start:end]
-                        c_match = re.search(r"color\s*=\s*\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}", block)
-                        rgb = (0,0,0)
-                        if c_match: rgb = (int(c_match.group(1)), int(c_match.group(2)), int(c_match.group(3)))
-                        cap_match = re.search(r"(capital|capital_state)\s*=\s*([A-Za-z0-9_]+)", block)
-                        capital = cap_match.group(2) if cap_match else ""
-                        return rgb, capital, path
-        return None, None, None
-
-    def save_country_definition(self, tag, rgb, capital, filepath):
-        if not filepath or not os.path.exists(filepath):
-            self.log("[ERROR] Definition file not found to update.", 'error')
-            return
-        try:
-            with open(filepath, 'r', encoding='utf-8-sig') as f: content = f.read()
-        except:
-            with open(filepath, 'r', encoding='utf-8') as f: content = f.read()
-        match = re.search(r"(^|\s)" + re.escape(tag) + r"\s*=\s*\{", content, re.MULTILINE)
-        if match:
-            start = match.end() - 1
-            _, end = self.find_block_content(content, start)
-            if end:
-                block = content[start:end]
-                new_block = block
-                r, g, b = rgb
-                if re.search(r"color\s*=", new_block):
-                    new_block = re.sub(r"color\s*=\s*\{[^}]+\}", f"color = {{ {r} {g} {b} }}", new_block)
-                else:
-                    new_block = new_block.rstrip("} \t\n") + f"\n\tcolor = {{ {r} {g} {b} }}\n}}"
-                if capital:
-                    if re.search(r"(capital|capital_state)\s*=", new_block):
-                         new_block = re.sub(r"(capital|capital_state)\s*=\s*[A-Za-z0-9_]+", f"capital = {capital}", new_block)
-                    else:
-                         new_block = new_block.rstrip("} \t\n") + f"\n\tcapital = {capital}\n}}"
-                content = content[:start] + new_block + content[end:]
-                with open(filepath, 'w', encoding='utf-8-sig') as f: f.write(content)
-                self.log(f"[SAVE] Updated definitions in {filepath}", 'success')
-
-    def load_country_history_details(self, tag):
-        hist_dir = os.path.join(self.mod_path, "common", "history", "countries")
-        info = { "gov_type": "monarchy", "laws": [], "ruler": {"first": "", "last": "", "ig": "", "ideology": ""} }
-        if not os.path.exists(hist_dir): return info
-        clean_tag = tag.replace("c:", "").strip()
-        target_files = []
-        for root, _, files in os.walk(hist_dir):
-            for file in files:
-                if not file.endswith(".txt"): continue
-                path = os.path.join(root, file)
-                try:
-                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
-                except:
-                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
-                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content): target_files.append((path, content))
-
-        for path, content in target_files:
-            idx = 0
-            while True:
-                s, e = self.get_block_range_safe(content, f"c:{clean_tag}", idx)
-                if not s: break
-                block = content[s:e]
-                laws = re.findall(r"activate_law\s*=\s*([A-Za-z0-9_:]+)", block)
-                info["laws"].extend(laws)
-
-                char_idx = 0
-                while True:
-                    m = re.search(r"create_character\s*=\s*\{", block[char_idx:])
-                    if not m: break
-                    abs_start = char_idx + m.start()
-                    bs, be = self.find_block_content(block, abs_start + m.end() - 1)
-                    if bs:
-                        char_block = block[bs:be]
-                        if "ruler = yes" in char_block:
-                            fn = re.search(r'first_name\s*=\s*"([^"]+)"', char_block)
-                            ln = re.search(r'last_name\s*=\s*"([^"]+)"', char_block)
-                            ig = re.search(r'interest_group\s*=\s*([A-Za-z0-9_]+)', char_block)
-                            ideo = re.search(r'trait\s*=\s*(ideology_[A-Za-z0-9_]+)', char_block)
-                            if fn: info["ruler"]["first"] = fn.group(1)
-                            if ln: info["ruler"]["last"] = ln.group(1)
-                            if ig: info["ruler"]["ig"] = ig.group(1)
-                            if ideo: info["ruler"]["ideology"] = ideo.group(1)
-                        char_idx = be
-                    else: break
-                idx = e
-
-        # Normalize laws
-        info["laws"] = [l.replace("law_type:", "") for l in info["laws"]]
-
-        if "law_monarchy" in info["laws"]: info["gov_type"] = "monarchy"
-        elif "law_presidential_republic" in info["laws"] or "law_parliamentary_republic" in info["laws"]: info["gov_type"] = "republic"
-        elif "law_theocracy" in info["laws"]: info["gov_type"] = "theocracy"
-        return info
-
-    def save_country_history(self, tag, gov_type, laws, ruler_info):
-        hist_dir = os.path.join(self.mod_path, "common", "history", "countries")
-        clean_tag = tag.replace("c:", "").strip()
-        target_path = None
-        target_content = None
-        for root, _, files in os.walk(hist_dir):
-            for file in files:
-                if not file.endswith(".txt"): continue
-                path = os.path.join(root, file)
-                try:
-                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
-                except:
-                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
-                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content):
-                    target_path = path; target_content = content; break
-
-        if not target_path: return self.log("[ERROR] No history file found.", 'error')
-        s, e = self.get_block_range_safe(target_content, f"c:{clean_tag}")
-        if not s: return
-        block = target_content[s:e]
-        new_block = block
-
-        # Laws
-        gov_law = "law_monarchy"
-        if gov_type == "republic": gov_law = "law_presidential_republic"
-        elif gov_type == "theocracy": gov_law = "law_theocracy"
-
-        laws_to_set = [gov_law] + laws
-        if gov_type == "republic": laws_to_set.append("law_appointed_bureaucrats")
-
-        exclusive_laws = [
-            ["law_monarchy", "law_presidential_republic", "law_parliamentary_republic", "law_theocracy", "law_council_republic"],
-            ["law_interventionism", "law_laissez_faire", "law_command_economy", "law_traditionalism", "law_agrarianism"],
-            ["law_free_trade", "law_protectionism", "law_isolationism", "law_mercantilism"],
-            ["law_autocracy", "law_oligarchy", "law_landed_voting", "law_wealth_voting", "law_census_voting", "law_universal_suffrage", "law_anarchy", "law_single_party_state"]
-        ]
-
-        for law in laws_to_set:
-            # Remove conflicting
-            for group in exclusive_laws:
-                if law in group:
-                    for ex in group:
-                        if ex != law:
-                            new_block = re.sub(r"\s*activate_law\s*=\s*(law_type:)?" + re.escape(ex) + r"\b", "", new_block)
-
-            # Add if missing
-            if not re.search(r"activate_law\s*=\s*(law_type:)?" + re.escape(law), new_block):
-                 new_block = new_block.rstrip("} \t\n") + f"\n\t\tactivate_law = law_type:{law}\n\t}}"
-
-        # Ruler
-        char_idx = 0
-        ruler_start = -1; ruler_end = -1
-        while True:
-            m = re.search(r"create_character\s*=\s*\{", new_block[char_idx:])
-            if not m: break
-            abs_start = char_idx + m.start()
-            bs, be = self.find_block_content(new_block, abs_start + m.end() - 1)
-            if bs:
-                sub = new_block[bs:be]
-                if "ruler = yes" in sub: ruler_start = abs_start; ruler_end = be; break
-                char_idx = be
-            else: break
-
-        if ruler_start != -1:
-            rb = new_block[ruler_start:ruler_end]
-            if ruler_info["first"]: rb = re.sub(r'first_name\s*=\s*"[^"]+"', f'first_name = "{ruler_info["first"]}"', rb)
-            if ruler_info["last"]: rb = re.sub(r'last_name\s*=\s*"[^"]+"', f'last_name = "{ruler_info["last"]}"', rb)
-            if ruler_info["ig"]: rb = re.sub(r'interest_group\s*=\s*[A-Za-z0-9_]+', f'interest_group = {ruler_info["ig"]}', rb)
-            if ruler_info["ideology"]:
-                rb = re.sub(r'\s*trait\s*=\s*ideology_[a-z_]+', '', rb)
-                rb = rb.rstrip("} \t\n") + f"\n\t\ttrait = {ruler_info['ideology']}\n\t}}"
-            new_block = new_block[:ruler_start] + rb + new_block[ruler_end:]
-
-        target_content = target_content[:s] + new_block + target_content[e:]
-        with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(target_content)
-        self.log(f"[SAVE] History updated in {target_path}", 'success')
-
-    # --- DIPLOMACY LOGIC ---
-    # --- DIPLOMACY LOGIC ---
-    SUBJECT_TYPES = ["colony", "puppet", "dominion", "protectorate", "tributary", "vassal", "personal_union"]
-
-    def find_and_remove_subject_status(self, tag_to_free):
-        """Scans all diplomacy files and removes any subject pact where tag_to_free is the target."""
-        dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
-        if not os.path.exists(dip_dir): return
-        clean_target = tag_to_free.replace("c:", "").strip()
-
-        for root, _, files in os.walk(dip_dir):
-            for file in files:
-                if not file.endswith(".txt"): continue
-                path = os.path.join(root, file)
-                try:
-                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
-                except:
-                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
-
-                original_content = content
-                file_changed = False
-
-                # We need to scan ALL country blocks, because any country could be the overlord
-                idx = 0
-                while True:
-                    # Find next country block
-                    match = re.search(r"c:([A-Za-z0-9_]+)\s*\??=\s*\{", content[idx:])
-                    if not match: break
-
-                    overlord_tag = match.group(1)
-                    abs_start = idx + match.start()
-                    s, e = self.find_block_content(content, abs_start + match.end() - 1)
-
-                    if s:
-                        block_body = content[s:e]
-
-                        # Check for subject pacts targeting our tag
-                        # create_diplomatic_pact = { country = c:TARGET type = TYPE }
-                        new_body_parts = []
-                        cursor = 0
-                        block_changed = False
-
-                        while cursor < len(block_body):
-                            m = re.search(r"create_diplomatic_pact\s*=\s*\{", block_body[cursor:])
-                            if not m:
-                                new_body_parts.append(block_body[cursor:])
-                                break
-
-                            pact_start = cursor + m.start()
-                            new_body_parts.append(block_body[cursor:pact_start])
-
-                            bs, be = self.find_block_content(block_body, pact_start + m.end() - 1)
-                            if bs:
-                                pact_inner = block_body[bs:be]
-                                is_target = re.search(r"country\s*=\s*c:" + re.escape(clean_target) + r"\b", pact_inner)
-
-                                type_match = re.search(r"type\s*=\s*([A-Za-z0-9_]+)", pact_inner)
-                                pact_type = type_match.group(1) if type_match else ""
-
-                                if is_target and pact_type in self.SUBJECT_TYPES:
-                                    # This is the pact to remove!
-                                    self.log(f"[DIP] Freed {clean_target} from being a {pact_type} of {overlord_tag}", 'warn')
-                                    block_changed = True
-                                else:
-                                    new_body_parts.append(block_body[pact_start:be])
-                                cursor = be
-                            else:
-                                new_body_parts.append(block_body[pact_start:])
-                                break
-
-                        if block_changed:
-                            # Reconstruct the country block
-                            new_block_body = "".join(new_body_parts)
-                            # Replace in content (careful with indices, content hasn't changed length yet in loop but we are rebuilding)
-                            # To handle this safely in a loop, we usually do one pass or complex offset tracking.
-                            # Simpler: If changed, update 'content' and restart loop or adjust offsets?
-                            # Since we are iterating top-level blocks, replacing 'content' invalidates 'idx'.
-
-                            # Strategy: Reconstruct the whole file content after processing all blocks?
-                            # Or just update this block and update 'e'.
-
-                            # Let's splice it in now
-                            prefix = content[:s]
-                            suffix = content[e:]
-                            content = prefix + new_block_body + suffix
-                            file_changed = True
-
-                            # Update e to reflect new length
-                            diff = len(new_block_body) - len(block_body)
-                            e += diff
-
-                        idx = e
-                    else:
-                        idx = abs_start + 1 # Should not happen if regex matched
-
-                if file_changed:
-                    with open(path, 'w', encoding='utf-8-sig') as f: f.write(content)
-
-    def load_diplomacy_data(self, tag):
-        dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
-        info = { "subjects": [], "rivals": [], "embargos": [], "truces": [], "relations": [] }
-        if not os.path.exists(dip_dir): return info
-        clean_tag = tag.replace("c:", "").strip()
-
-        for root, _, files in os.walk(dip_dir):
-            for file in files:
-                if not file.endswith(".txt"): continue
-                path = os.path.join(root, file)
-                try:
-                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
-                except:
-                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
-
-                idx = 0
-                while True:
-                    s, e = self.get_block_range_safe(content, f"c:{clean_tag}", idx)
-                    if not s: break
-                    block = content[s:e]
-
-                    # Subjects
-                    for m in re.finditer(r"create_diplomatic_pact\s*=\s*\{([^}]+)\}", block):
-                        inner = m.group(1)
-                        cty = re.search(r"country\s*=\s*c:([A-Za-z0-9_]+)", inner)
-                        typ = re.search(r"type\s*=\s*([A-Za-z0-9_]+)", inner)
-                        if cty and typ:
-                            if typ.group(1) in ["rivalry", "embargo"]: continue # Handled elsewhere usually, but check file
-                            info["subjects"].append({"target": cty.group(1), "type": typ.group(1)})
-
-                    # Rivals/Embargos (often same structure as pact)
-                    # Check filename or explicit types if they are pacts
-                    if "rival" in file or "embargo" in file:
-                         for m in re.finditer(r"create_diplomatic_pact\s*=\s*\{([^}]+)\}", block):
-                            inner = m.group(1)
-                            cty = re.search(r"country\s*=\s*c:([A-Za-z0-9_]+)", inner)
-                            typ = re.search(r"type\s*=\s*([A-Za-z0-9_]+)", inner)
-                            if cty and typ:
-                                if typ.group(1) == "rivalry": info["rivals"].append(cty.group(1))
-                                elif typ.group(1) == "embargo": info["embargos"].append(cty.group(1))
-
-                    # Truces
-                    for m in re.finditer(r"create_bidirectional_truce\s*=\s*\{([^}]+)\}", block):
-                        inner = m.group(1)
-                        cty = re.search(r"country\s*=\s*c:([A-Za-z0-9_]+)", inner)
-                        dur = re.search(r"months\s*=\s*(\d+)", inner)
-                        if cty:
-                            info["truces"].append({"target": cty.group(1), "months": dur.group(1) if dur else "12"})
-
-                    # Relations
-                    for m in re.finditer(r"set_relations\s*=\s*\{([^}]+)\}", block):
-                        inner = m.group(1)
-                        cty = re.search(r"country\s*=\s*c:([A-Za-z0-9_]+)", inner)
-                        val = re.search(r"value\s*=\s*(-?\d+)", inner)
-                        if cty and val:
-                            info["relations"].append({"target": cty.group(1), "value": val.group(1)})
-
-                    idx = e
-        return info
-
-    def add_diplomatic_pact(self, tag, target, pact_type, category):
-        # category: subject, rival, embargo, truce
-        clean_tag = tag.replace("c:", "").strip()
-        clean_target = target.replace("c:", "").strip()
-
-        # VALIDATION: If creating a subject, ensure no conflicts
-        if category == "subject":
-            # 1. Target cannot already be a subject
-            self.find_and_remove_subject_status(clean_target)
-            # 2. Actor (Overlord) cannot be a subject themselves
-            self.find_and_remove_subject_status(clean_tag)
-
-        dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
-        os.makedirs(dip_dir, exist_ok=True)
-        filename = "00_subject_relationships.txt"
-        if category == "rival": filename = "00_rivalries.txt"
-        elif category == "embargo": filename = "00_embargos.txt"
-        elif category == "truce": filename = "00_truces.txt"
-
-        filepath = os.path.join(dip_dir, filename)
-        if not os.path.exists(filepath):
-             with open(filepath, 'w', encoding='utf-8-sig') as f: f.write("DIPLOMACY = {\n}")
-
-        try:
-            with open(filepath, 'r', encoding='utf-8-sig') as f: content = f.read()
-        except:
-            with open(filepath, 'r', encoding='utf-8') as f: content = f.read()
-
-        # Build entry
-        entry = ""
-        if category == "truce":
-             entry = f"\t\tcreate_bidirectional_truce = {{ country = c:{clean_target} months = 60 }}"
-        else:
-             entry = f"\t\tcreate_diplomatic_pact = {{ country = c:{clean_target} type = {pact_type} }}"
-
-        # Insert
-        s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
-        if s:
-            # Append to existing block
-            block = content[s:e]
-            new_block = block.rstrip("} \t\n") + "\n" + entry + "\n\t}"
-            content = content[:s] + new_block + content[e:]
-        else:
-            # Create new block
-            # Find DIPLOMACY block
-            d_s, d_e = self.get_block_range_safe(content, "DIPLOMACY")
-            if d_s:
-                new_block = f"\n\tc:{clean_tag} ?= {{\n{entry}\n\t}}"
-                content = content[:d_e-1] + new_block + "\n}" + content[d_e:]
-            else:
-                content += f"\nDIPLOMACY = {{\n\tc:{clean_tag} ?= {{\n{entry}\n\t}}\n}}"
-
-        with open(filepath, 'w', encoding='utf-8-sig') as f: f.write(content)
-        self.log(f"[DIP] Added {pact_type} with {clean_target} in {filename}", 'success')
-
-    def remove_diplomatic_pact(self, tag, target, pact_type):
-        dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
-        clean_tag = tag.replace("c:", "").strip()
-        clean_target = target.replace("c:", "").strip()
-
-        files_to_check = ["00_subject_relationships.txt", "00_rivalries.txt", "00_embargos.txt", "00_truces.txt"]
-
-        for fname in files_to_check:
-            fpath = os.path.join(dip_dir, fname)
-            if not os.path.exists(fpath): continue
-
-            try:
-                with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
-            except:
-                with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
-
-            s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
-            if not s: continue
-
-            block = content[s:e]
-
-            # Regex to match the specific pact
-            # Need to match { ... country = c:TARGET ... type = TYPE } across lines
-            # This is hard with regex alone.
-
-            # Simple approach: Find block start, verify content, remove.
-            # Using block finder again inside.
-
-            new_inner_parts = []
-            cursor = 0
-            # Skip header "c:TAG ?= {"
-            header_len = content[s:].find('{') + 1
-            inner_body = block[header_len:-1]
-
-            change_made = False
-
-            while cursor < len(inner_body):
-                m = re.search(r"(create_diplomatic_pact|create_bidirectional_truce)\s*=\s*\{", inner_body[cursor:])
-                if not m:
-                    new_inner_parts.append(inner_body[cursor:])
-                    break
-
-                abs_start = cursor + m.start()
-                new_inner_parts.append(inner_body[cursor:abs_start])
-
-                bs, be = self.find_block_content(inner_body, abs_start + m.end() - 1)
-                if bs:
-                    pact_block = inner_body[bs:be]
-
-                    # Check if this is the one to delete
-                    is_target = f"c:{clean_target}" in pact_block
-                    is_type = (pact_type in pact_block) if pact_type != "truce" else True # Truce doesn't have type field usually
-
-                    if is_target and is_type:
-                        change_made = True
-                        # Skip this block (don't append)
-                    else:
-                        new_inner_parts.append(inner_body[abs_start:be])
-                    cursor = be
-                else:
-                    new_inner_parts.append(inner_body[abs_start:])
-                    break
-
-            if change_made:
-                new_block = block[:header_len] + "".join(new_inner_parts) + "}"
-                content = content[:s] + new_block + content[e:]
-                with open(fpath, 'w', encoding='utf-8-sig') as f: f.write(content)
-                self.log(f"[DIP] Removed {pact_type} with {clean_target} from {fname}", 'success')
-
-    def set_relations(self, tag, target, value):
-        dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
-        os.makedirs(dip_dir, exist_ok=True)
-        fpath = os.path.join(dip_dir, "00_relations.txt")
-        if not os.path.exists(fpath):
-             with open(fpath, 'w', encoding='utf-8-sig') as f: f.write("DIPLOMACY = {\n}")
-
-        try:
-            with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
-        except:
-            with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
-
-        clean_tag = tag.replace("c:", "").strip()
-        clean_target = target.replace("c:", "").strip()
-
-        # We need to remove existing set_relations for this target first
-        s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
-
-        entry = f"\t\tset_relations = {{ country = c:{clean_target} value = {value} }}"
-
-        if s:
-            block = content[s:e]
-            # Remove existing relation to target
-            # Regex: set_relations = { country = c:TARGET value = ... }
-            block = re.sub(r"set_relations\s*=\s*\{[^}]*c:" + re.escape(clean_target) + r"\b[^}]*\}", "", block)
-            # Append new
-            new_block = block.rstrip("} \t\n") + "\n" + entry + "\n\t}"
-            content = content[:s] + new_block + content[e:]
-        else:
-             # Create new block
-            d_s, d_e = self.get_block_range_safe(content, "DIPLOMACY")
-            if d_s:
-                new_block = f"\n\tc:{clean_tag} ?= {{\n{entry}\n\t}}"
-                content = content[:d_e-1] + new_block + "\n}" + content[d_e:]
-            else:
-                content += f"\nDIPLOMACY = {{\n\tc:{clean_tag} ?= {{\n{entry}\n\t}}\n}}"
-
-        with open(fpath, 'w', encoding='utf-8-sig') as f: f.write(content)
-        self.log(f"[DIP] Relations set to {value} with {clean_target}", 'success')
 
 # =============================================================================
 #  GUI IMPLEMENTATION
@@ -1536,8 +985,6 @@ class App(tk.Tk):
         ttk.Button(nav_frame, text="Create Country", command=self.show_create_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Army", command=self.show_army_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Navy", command=self.show_navy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(nav_frame, text="Mod Country", command=self.show_country_mod_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(nav_frame, text="Diplomacy", command=self.show_diplomacy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         # 3. Dynamic Content
         self.content_frame = ttk.Frame(main_frame)
@@ -1548,7 +995,7 @@ class App(tk.Tk):
         self.action_frame.pack(fill=tk.X)
         self.run_btn = ttk.Button(self.action_frame, text="Execute", command=lambda: None)
         self.run_btn.pack(side=tk.RIGHT, padx=5)
-        
+
         log_frame = ttk.LabelFrame(main_frame, text="Execution Log", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
         self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, bg="#1e1e1e", fg="#d4d4d4", insertbackground="white", relief="flat")
@@ -1615,12 +1062,12 @@ class App(tk.Tk):
         e_old = ttk.Entry(f, textvariable=self.cr_old_owner, width=10)
         e_old.grid(row=1, column=3, sticky=tk.W, pady=5)
         e_old.bind("<FocusOut>", self.on_old_owner_change)
-        
+
         # Row 2
         ttk.Label(f, text="Capital State (e.g. aquitaine):").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.cr_capital = tk.StringVar()
         ttk.Entry(f, textvariable=self.cr_capital, width=25).grid(row=2, column=1, sticky=tk.W, pady=5)
-        
+
         self.cr_annex = tk.BooleanVar()
         ttk.Checkbutton(f, text="Full Annexation", variable=self.cr_annex, command=self.toggle_annex_ui).grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=10)
 
@@ -1700,7 +1147,7 @@ class App(tk.Tk):
         # User requested to NOT populate the UI boxes automatically to keep them blank.
         # The background logic in start_create will handle defaults if these remain empty.
         pass
-    
+
     def filter_culture_options(self, event):
         typed = self.cr_cult_search.get().strip().lower()
         if not typed:
@@ -1779,7 +1226,7 @@ class App(tk.Tk):
         ttk.Label(f, text="Target State (Must be Coastal!):").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.nav_state = tk.StringVar()
         ttk.Entry(f, textvariable=self.nav_state, width=20).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        
+
         warn_lbl = ttk.Label(f, text="(Warning: Game will crash if state is landlocked)", foreground="#EF5350")
         warn_lbl.grid(row=1, column=2, columnspan=2, sticky=tk.W)
 
@@ -1809,308 +1256,6 @@ class App(tk.Tk):
         if color[0]:
             self.cr_rgb = [int(x) for x in color[0]]
             self.color_preview.config(bg=color[1])
-
-    # --- MODE 5: COUNTRY MODIFICATION ---
-    def show_country_mod_ui(self):
-        self.clear_content()
-        self.mode = "MOD_COUNTRY"
-        f = ttk.LabelFrame(self.content_frame, text="Modify Country", padding=15)
-        f.pack(fill=tk.BOTH, expand=True)
-
-        # Tag Input & Load
-        top_frame = ttk.Frame(f)
-        top_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(top_frame, text="Country Tag:").pack(side=tk.LEFT)
-        self.mc_tag = tk.StringVar()
-        ttk.Entry(top_frame, textvariable=self.mc_tag, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(top_frame, text="Load Data", command=self.load_country_mod_data).pack(side=tk.LEFT, padx=5)
-
-        # Identity
-        id_frame = ttk.LabelFrame(f, text="Country Identity", padding=5)
-        id_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(id_frame, text="Name:").grid(row=0, column=0, sticky=tk.W)
-        self.mc_name = tk.StringVar()
-        ttk.Entry(id_frame, textvariable=self.mc_name, width=30).grid(row=0, column=1, sticky=tk.W, padx=5)
-
-        ttk.Label(id_frame, text="Adjective:").grid(row=0, column=2, sticky=tk.W)
-        self.mc_adj = tk.StringVar()
-        ttk.Entry(id_frame, textvariable=self.mc_adj, width=30).grid(row=0, column=3, sticky=tk.W, padx=5)
-
-        ttk.Button(id_frame, text="Color Picker", command=self.pick_color_mod).grid(row=0, column=4, padx=5)
-        self.mc_rgb = [255, 255, 255]
-        self.mc_color_prev = tk.Label(id_frame, text="     ", bg="#FFFFFF", relief="solid", borderwidth=1)
-        self.mc_color_prev.grid(row=0, column=5)
-
-        # Internal Politics
-        pol_frame = ttk.LabelFrame(f, text="Internal Politics", padding=5)
-        pol_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(pol_frame, text="Government:").grid(row=0, column=0, sticky=tk.W)
-        self.mc_gov = tk.StringVar(value="monarchy")
-        gf = ttk.Frame(pol_frame)
-        gf.grid(row=0, column=1, columnspan=3, sticky=tk.W)
-        ttk.Radiobutton(gf, text="Monarchy", variable=self.mc_gov, value="monarchy").pack(side=tk.LEFT)
-        ttk.Radiobutton(gf, text="Republic", variable=self.mc_gov, value="republic").pack(side=tk.LEFT)
-        ttk.Radiobutton(gf, text="Theocracy", variable=self.mc_gov, value="theocracy").pack(side=tk.LEFT)
-
-        ttk.Label(pol_frame, text="Economic System:").grid(row=1, column=0, sticky=tk.W)
-        self.mc_law_eco = tk.StringVar()
-        ttk.Combobox(pol_frame, textvariable=self.mc_law_eco, values=["law_interventionism", "law_laissez_faire", "law_command_economy", "law_traditionalism", "law_agrarianism"], state="readonly").grid(row=1, column=1, sticky=tk.W, padx=5)
-
-        ttk.Label(pol_frame, text="Trade Policy:").grid(row=1, column=2, sticky=tk.W)
-        self.mc_law_trade = tk.StringVar()
-        ttk.Combobox(pol_frame, textvariable=self.mc_law_trade, values=["law_free_trade", "law_protectionism", "law_isolationism", "law_mercantilism"], state="readonly").grid(row=1, column=3, sticky=tk.W, padx=5)
-
-        ttk.Label(pol_frame, text="Power Structure:").grid(row=2, column=0, sticky=tk.W)
-        self.mc_law_power = tk.StringVar()
-        ttk.Combobox(pol_frame, textvariable=self.mc_law_power, values=["law_autocracy", "law_oligarchy", "law_landed_voting", "law_wealth_voting", "law_census_voting", "law_universal_suffrage", "law_anarchy", "law_single_party_state"], state="readonly").grid(row=2, column=1, sticky=tk.W, padx=5)
-
-        ttk.Label(pol_frame, text="Capital State:").grid(row=2, column=2, sticky=tk.W)
-        self.mc_capital = tk.StringVar()
-        ttk.Entry(pol_frame, textvariable=self.mc_capital, width=20).grid(row=2, column=3, sticky=tk.W, padx=5)
-
-        # Ruler Designer
-        rul_frame = ttk.LabelFrame(f, text="Ruler Designer", padding=5)
-        rul_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(rul_frame, text="First Name:").grid(row=0, column=0, sticky=tk.W)
-        self.mc_r_first = tk.StringVar()
-        ttk.Entry(rul_frame, textvariable=self.mc_r_first).grid(row=0, column=1, padx=5)
-
-        ttk.Label(rul_frame, text="Last Name:").grid(row=0, column=2, sticky=tk.W)
-        self.mc_r_last = tk.StringVar()
-        ttk.Entry(rul_frame, textvariable=self.mc_r_last).grid(row=0, column=3, padx=5)
-
-        ttk.Label(rul_frame, text="Interest Group:").grid(row=1, column=0, sticky=tk.W)
-        self.mc_r_ig = tk.StringVar()
-        igs = ["ig_landowners", "ig_industrialists", "ig_intelligentsia", "ig_armed_forces", "ig_devout", "ig_petty_bourgeoisie", "ig_trade_unions", "ig_rural_folk"]
-        ttk.Combobox(rul_frame, textvariable=self.mc_r_ig, values=igs, state="readonly").grid(row=1, column=1, padx=5)
-
-        ttk.Label(rul_frame, text="Ideology:").grid(row=1, column=2, sticky=tk.W)
-        self.mc_r_ideo = tk.StringVar()
-        ideos = ["ideology_traditionalist", "ideology_slaver", "ideology_royalist", "ideology_theocrat", "ideology_liberal", "ideology_market_liberal", "ideology_protectionist", "ideology_abolitionist", "ideology_radical", "ideology_republican", "ideology_democrat", "ideology_jingoist", "ideology_pacifist", "ideology_moderate"]
-        ttk.Combobox(rul_frame, textvariable=self.mc_r_ideo, values=ideos, state="readonly").grid(row=1, column=3, padx=5)
-
-        self.run_btn.config(text="Save Changes", command=self.save_country_mod_changes)
-
-    def load_country_mod_data(self):
-        tag = self.logic.format_tag_clean(self.mc_tag.get())
-        if not tag: return messagebox.showerror("Error", "Enter a tag.")
-
-        # Identity
-        name, adj = self.logic.load_country_localization(tag)
-        self.mc_name.set(name)
-        self.mc_adj.set(adj)
-
-        rgb, cap, _ = self.logic.load_country_definition_data(tag)
-        if rgb:
-            self.mc_rgb = list(rgb)
-            self.mc_color_prev.config(bg=self._rgb_to_hex(rgb))
-        if cap:
-            self.mc_capital.set(cap)
-
-        # History
-        hist = self.logic.load_country_history_details(tag)
-        self.mc_gov.set(hist["gov_type"])
-
-        # Populate laws if found
-        for l in hist["laws"]:
-            if "interventionism" in l or "laissez" in l or "command" in l or "traditionalism" in l or "agrarianism" in l: self.mc_law_eco.set("law_" + l if not l.startswith("law_") else l)
-            if "free_trade" in l or "protectionism" in l or "isolationism" in l or "mercantilism" in l: self.mc_law_trade.set("law_" + l if not l.startswith("law_") else l)
-            if "autocracy" in l or "voting" in l or "anarchy" in l or "oligarchy" in l or "party" in l: self.mc_law_power.set("law_" + l if not l.startswith("law_") else l)
-
-        self.mc_r_first.set(hist["ruler"]["first"])
-        self.mc_r_last.set(hist["ruler"]["last"])
-        self.mc_r_ig.set(hist["ruler"]["ig"])
-        self.mc_r_ideo.set(hist["ruler"]["ideology"])
-
-        self.log_message(f"Loaded data for {tag}", 'success')
-
-    def save_country_mod_changes(self):
-        tag = self.logic.format_tag_clean(self.mc_tag.get())
-        if not tag: return
-
-        # Save Loc
-        self.logic.save_country_localization(tag, self.mc_name.get(), self.mc_adj.get())
-
-        # Save Def
-        _, _, path = self.logic.load_country_definition_data(tag) # Get path
-        clean_cap = self.logic.format_state_clean(self.mc_capital.get())
-        self.logic.save_country_definition(tag, self.mc_rgb, clean_cap, path)
-
-        # Save History
-        laws = []
-        if self.mc_law_eco.get(): laws.append(self.mc_law_eco.get())
-        if self.mc_law_trade.get(): laws.append(self.mc_law_trade.get())
-        if self.mc_law_power.get(): laws.append(self.mc_law_power.get())
-
-        ruler = {
-            "first": self.mc_r_first.get(),
-            "last": self.mc_r_last.get(),
-            "ig": self.mc_r_ig.get(),
-            "ideology": self.mc_r_ideo.get()
-        }
-
-        self.logic.save_country_history(tag, self.mc_gov.get(), laws, ruler)
-        messagebox.showinfo("Success", "Country modifications saved.")
-
-    def pick_color_mod(self):
-        init_color = self._rgb_to_hex(self.mc_rgb)
-        color = colorchooser.askcolor(color=init_color, title="Choose Country Color")
-        if color[0]:
-            self.mc_rgb = [int(x) for x in color[0]]
-            self.mc_color_prev.config(bg=color[1])
-
-    # --- MODE 6: DIPLOMACY MANAGER ---
-    def show_diplomacy_ui(self):
-        self.clear_content()
-        self.mode = "DIPLOMACY"
-        f = ttk.LabelFrame(self.content_frame, text="Diplomacy Manager", padding=15)
-        f.pack(fill=tk.BOTH, expand=True)
-
-        # Tag & Load
-        top_frame = ttk.Frame(f)
-        top_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(top_frame, text="Country Tag:").pack(side=tk.LEFT)
-        self.dip_tag = tk.StringVar()
-        ttk.Entry(top_frame, textvariable=self.dip_tag, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(top_frame, text="Load Data", command=self.load_diplomacy_ui_data).pack(side=tk.LEFT, padx=5)
-
-        # Lists
-        list_frame = ttk.Frame(f)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        # Subjects
-        sf = ttk.LabelFrame(list_frame, text="Subject Relationships", padding=5)
-        sf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0,5))
-        self.lb_subjects = tk.Listbox(sf, height=8, bg="#424242", fg="#ECEFF1")
-        self.lb_subjects.pack(fill=tk.BOTH, expand=True)
-        ttk.Button(sf, text="Remove Selected", command=lambda: self.remove_dip_item("subject")).pack(fill=tk.X)
-
-        # Hostiles
-        hf = ttk.LabelFrame(list_frame, text="Hostile / Truces", padding=5)
-        hf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5,0))
-        self.lb_hostiles = tk.Listbox(hf, height=8, bg="#424242", fg="#ECEFF1")
-        self.lb_hostiles.pack(fill=tk.BOTH, expand=True)
-        ttk.Button(hf, text="Remove Selected", command=lambda: self.remove_dip_item("hostile")).pack(fill=tk.X)
-
-        # Add New
-        add_frame = ttk.LabelFrame(f, text="Add New Relationship", padding=5)
-        add_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(add_frame, text="Target Tag:").grid(row=0, column=0, sticky=tk.W)
-        self.dip_target = tk.StringVar()
-        ttk.Entry(add_frame, textvariable=self.dip_target, width=10).grid(row=0, column=1, sticky=tk.W, padx=5)
-
-        self.dip_cat = tk.StringVar(value="subject")
-        ttk.Radiobutton(add_frame, text="Subject", variable=self.dip_cat, value="subject", command=self.update_dip_type_options).grid(row=0, column=2)
-        ttk.Radiobutton(add_frame, text="Hostile/Truce", variable=self.dip_cat, value="hostile", command=self.update_dip_type_options).grid(row=0, column=3)
-
-        self.dip_type_opts = self.logic.SUBJECT_TYPES
-        self.dip_type = tk.StringVar()
-        self.cb_dip_type = ttk.Combobox(add_frame, textvariable=self.dip_type, values=self.dip_type_opts, state="readonly")
-        self.cb_dip_type.grid(row=0, column=4, padx=5)
-        self.cb_dip_type.current(0)
-
-        ttk.Button(add_frame, text="Create", command=self.create_diplomacy_pact).grid(row=0, column=5, padx=5)
-
-        # Relations Value
-        rel_frame = ttk.LabelFrame(f, text="Set Relations", padding=5)
-        rel_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(rel_frame, text="Target Tag:").grid(row=0, column=0)
-        self.dip_rel_target = tk.StringVar()
-        ttk.Entry(rel_frame, textvariable=self.dip_rel_target, width=10).grid(row=0, column=1, padx=5)
-
-        ttk.Label(rel_frame, text="Value (-100 to 100):").grid(row=0, column=2)
-        self.dip_rel_val = tk.IntVar(value=0)
-        ttk.Entry(rel_frame, textvariable=self.dip_rel_val, width=5).grid(row=0, column=3, padx=5)
-
-        ttk.Button(rel_frame, text="Set Relation", command=self.set_relation_val).grid(row=0, column=4, padx=5)
-
-        self.run_btn.config(text="Refresh Data", command=self.load_diplomacy_ui_data)
-
-    def update_dip_type_options(self):
-        cat = self.dip_cat.get()
-        if cat == "subject":
-            self.dip_type_opts = self.logic.SUBJECT_TYPES
-        else:
-            self.dip_type_opts = ["rivalry", "embargo", "truce"]
-        self.cb_dip_type['values'] = self.dip_type_opts
-        self.cb_dip_type.current(0)
-
-    def load_diplomacy_ui_data(self):
-        tag = self.logic.format_tag_clean(self.dip_tag.get())
-        if not tag: return messagebox.showerror("Error", "Enter a tag.")
-
-        data = self.logic.load_diplomacy_data(tag)
-
-        self.lb_subjects.delete(0, tk.END)
-        for s in data["subjects"]:
-            self.lb_subjects.insert(tk.END, f"{s['target']} ({s['type']})")
-
-        self.lb_hostiles.delete(0, tk.END)
-        for r in data["rivals"]: self.lb_hostiles.insert(tk.END, f"{r} (Rival)")
-        for e in data["embargos"]: self.lb_hostiles.insert(tk.END, f"{e} (Embargo)")
-        for t in data["truces"]: self.lb_hostiles.insert(tk.END, f"{t['target']} (Truce: {t['months']}m)")
-
-        self.log_message(f"Loaded diplomacy for {tag}", 'success')
-
-    def create_diplomacy_pact(self):
-        tag = self.logic.format_tag_clean(self.dip_tag.get())
-        target = self.logic.format_tag_clean(self.dip_target.get())
-        dtype = self.dip_type.get()
-        cat = self.dip_cat.get() # subject or hostile
-
-        if not tag or not target: return messagebox.showerror("Error", "Tags required.")
-
-        real_cat = "subject"
-        if cat == "hostile":
-            if dtype == "rivalry": real_cat = "rival"
-            elif dtype == "embargo": real_cat = "embargo"
-            elif dtype == "truce": real_cat = "truce"
-
-        self.logic.add_diplomatic_pact(tag, target, dtype, real_cat)
-        self.load_diplomacy_ui_data()
-
-    def remove_dip_item(self, list_type):
-        tag = self.logic.format_tag_clean(self.dip_tag.get())
-        if not tag: return
-
-        sel = None
-        if list_type == "subject":
-            sel = self.lb_subjects.curselection()
-        else:
-            sel = self.lb_hostiles.curselection()
-
-        if not sel: return
-
-        text = self.lb_subjects.get(sel[0]) if list_type == "subject" else self.lb_hostiles.get(sel[0])
-        # Parse text: "TARGET (TYPE)" or "TARGET (Truce: 12m)"
-        target = text.split()[0]
-        dtype = ""
-        if "Rival" in text: dtype = "rivalry"
-        elif "Embargo" in text: dtype = "embargo"
-        elif "Truce" in text: dtype = "truce"
-        else:
-            # Subject type
-            dtype = text.split('(')[1].replace(')', '')
-
-        self.logic.remove_diplomatic_pact(tag, target, dtype)
-        self.load_diplomacy_ui_data()
-
-    def set_relation_val(self):
-        tag = self.logic.format_tag_clean(self.dip_tag.get())
-        target = self.logic.format_tag_clean(self.dip_rel_target.get())
-        try:
-            val = self.dip_rel_val.get()
-        except: return
-
-        if not tag or not target: return
-
-        self.logic.set_relations(tag, target, val)
-        self.log_message(f"Set relations {tag}<->{target} to {val}")
 
     # --- SHARED FUNCTIONS ---
     def browse_folder(self):
@@ -2189,7 +1334,7 @@ class App(tk.Tk):
                     prim_culture = cultures[0]
                     self.log_message(f"[INFO] Religion missing. searching in culture '{prim_culture}'...", 'info')
                     found_rel = self.logic.get_religion_by_culture(prim_culture)
-                
+
                 if found_rel:
                     religion = found_rel
                     self.log_message(f"[INFO] Found religion '{religion}' from culture '{prim_culture}'.", 'success')
@@ -2272,7 +1417,7 @@ class App(tk.Tk):
 
             # (Old owner data logic is now partly in UI for prepopulation, but we still need capital logic if annexing)
             data = self.logic.get_country_data(old_owner)
-            
+
             all_states = []
             if is_annex:
                 self.log_message(f"[INFO] Full Annexation selected. Detecting all states for {old_owner}...", 'info')
@@ -2281,7 +1426,7 @@ class App(tk.Tk):
                     self.log_message(f"[WARN] No states found for {old_owner} to annex.", 'warn')
                     return
                 all_states = found_states
-                
+
                 # If capital input is blank, use old owner's capital
                 if not capital:
                     if data["capital"]:
@@ -2298,7 +1443,7 @@ class App(tk.Tk):
                 all_states = [capital] + others
 
             self.logic.create_country_files(tag, name, adj, capital, gov, rgb, cultures, religion, tier, country_type, old_owner)
-            
+
             self.log_message("--- Transferring Land & Units ---", 'info')
             self.execute_transfer_core(all_states, old_owner, tag)
         except Exception as e:
