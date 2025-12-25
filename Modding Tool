@@ -173,18 +173,22 @@ class Vic3Logic:
                 except:
                     with open(path, 'r', encoding='utf-8') as f: content = f.read()
 
-                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content):
-                    c_start, c_end = self.get_block_range_safe(content, f"c:{clean_tag}")
-                    if c_start is not None:
-                        block = content[c_start:c_end]
-                        wealth = re.search(r"effect_starting_pop_wealth_[a-z_]+\s*=\s*yes", block)
-                        if wealth: effects.append(wealth.group(0))
+                current_idx = 0
+                while True:
+                    c_start, c_end = self.get_block_range_safe(content, f"c:{clean_tag}", current_idx)
+                    if c_start is None: break
 
-                        literacy = re.search(r"effect_starting_pop_literacy_[a-z_]+\s*=\s*yes", block)
-                        if literacy: effects.append(literacy.group(0))
+                    block = content[c_start:c_end]
+                    wealth = re.search(r"effect_starting_pop_wealth_[a-z_]+\s*=\s*yes", block)
+                    if wealth and wealth.group(0) not in effects: effects.append(wealth.group(0))
 
-                        if effects:
-                            return "\n\t\t".join(effects)
+                    literacy = re.search(r"effect_starting_pop_literacy_[a-z_]+\s*=\s*yes", block)
+                    if literacy and literacy.group(0) not in effects: effects.append(literacy.group(0))
+
+                    current_idx = c_end
+
+        if effects:
+            return "\n\t\t".join(effects)
         return None
 
     def get_nearest_vic3_color(self, rgb):
@@ -254,6 +258,7 @@ class Vic3Logic:
     activate_law = law_census_voting
     activate_law = law_national_militia
     activate_law = law_per_capita_tax
+    activate_law = law_appointed_bureaucrats
 """
         ig_ruler = "ig_landowners" if gov_type == "monarchy" else "ig_intelligentsia"
 
