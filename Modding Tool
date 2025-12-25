@@ -132,6 +132,35 @@ class Vic3Logic:
                         return data
         return data
 
+    def get_religion_by_culture(self, culture):
+        """Scans common/cultures to find the default religion for a given culture."""
+        cult_dir = os.path.join(self.mod_path, "common/cultures")
+        if not os.path.exists(cult_dir): return None
+
+        # Matches: start of line or whitespace + culture + whitespace + = + whitespace + {
+        pat = re.compile(r"(?:^|\s)" + re.escape(culture) + r"\s*=\s*\{", re.MULTILINE)
+
+        for root, _, files in os.walk(cult_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                try:
+                    with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
+
+                match = pat.search(content)
+                if match:
+                    # Found start of culture block. Find the block content.
+                    start_brace = match.end() - 1
+                    _, end_brace = self.find_block_content(content, start_brace)
+                    
+                    if end_brace:
+                        block = content[start_brace:end_brace]
+                        rel_match = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", block)
+                        if rel_match:
+                            return rel_match.group(1).strip()
+        return None
+
     def get_tech_tier_from_history(self, tag):
         """Scans history/countries for tech tier."""
         hist_dir = os.path.join(self.mod_path, "common/history/countries")
@@ -249,16 +278,16 @@ class Vic3Logic:
         os.makedirs(hist_dir, exist_ok=True)
         hist_file = os.path.join(hist_dir, f"{tag} - {name}.txt")
         laws = """
-    activate_law = law_monarchy
-    activate_law = law_autocracy
-    activate_law = law_peasant_levies
-    activate_law = law_land_tax
+    activate_law = law_type:law_monarchy
+    activate_law = law_type:law_autocracy
+    activate_law = law_type:law_peasant_levies
+    activate_law = law_type:law_land_tax
 """ if gov_type == "monarchy" else """
-    activate_law = law_presidential_republic
-    activate_law = law_census_voting
-    activate_law = law_national_militia
-    activate_law = law_per_capita_tax
-    activate_law = law_appointed_bureaucrats
+    activate_law = law_type:law_presidential_republic
+    activate_law = law_type:law_census_voting
+    activate_law = law_type:law_national_militia
+    activate_law = law_type:law_per_capita_tax
+    activate_law = law_type:law_appointed_bureaucrats
 """
         ig_ruler = "ig_landowners" if gov_type == "monarchy" else "ig_intelligentsia"
 
@@ -1189,19 +1218,35 @@ class App(tk.Tk):
         if not is_annex and not capital: return messagebox.showerror("Error", "Capital State ID required unless Full Annexation.")
         if len(tag) != 3: return messagebox.showerror("Error", "Tag must be exactly 3 characters.")
 
-        # If not manually selected, default to old owner's data
+        # Pre-fetch old owner data to minimize redundant calls
+        data = self.logic.get_country_data(old_owner)
+
+        # If cultures were not manually selected, default to old owner's data
         if not cultures:
-            data = self.logic.get_country_data(old_owner)
             if data["cultures"]:
                 cultures = data["cultures"].split()
 
+        # If religion is not manually selected, check old owner, then check culture
         if not religion:
-            data = self.logic.get_country_data(old_owner)
             if data["religion"]:
                 religion = data["religion"]
+            else:
+                # Attempt to find religion from the primary culture
+                found_rel = None
+                if cultures:
+                    prim_culture = cultures[0]
+                    self.log_message(f"[INFO] Religion missing. searching in culture '{prim_culture}'...", 'info')
+                    found_rel = self.logic.get_religion_by_culture(prim_culture)
+                
+                if found_rel:
+                    religion = found_rel
+                    self.log_message(f"[INFO] Found religion '{religion}' from culture '{prim_culture}'.", 'success')
+                else:
+                    self.log_message(f"[WARN] Religion not found for {old_owner} or culture. Defaulting to 'catholic'.", 'warn')
+                    religion = "catholic"
 
         if not cultures: return messagebox.showerror("Error", "At least one culture required.")
-        if not religion: return messagebox.showerror("Error", "Religion required.")
+        # Religion check removed, effectively allowing the process to continue even if religion wasn't found (defaulted to catholic)
 
         self.is_processing = True
         self.run_btn.config(state='disabled')
