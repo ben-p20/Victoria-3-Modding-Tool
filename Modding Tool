@@ -220,6 +220,73 @@ class Vic3Logic:
             return "\n\t\t".join(effects)
         return None
 
+    def get_extended_history_data(self, tag):
+        """Scans history/countries for extended data (tech, laws, politics, institutions)."""
+        hist_dir = os.path.join(self.mod_path, "common/history/countries")
+        if not os.path.exists(hist_dir): return None
+
+        clean_tag = tag.replace("c:", "").strip()
+        data = {
+            "tech_tier": [],
+            "techs_researched": [],
+            "politics": [],
+            "laws": [],
+            "institutions": []
+        }
+
+        found_any = False
+
+        for root, _, files in os.walk(hist_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                current_idx = 0
+                while True:
+                    c_start, c_end = self.get_block_range_safe(content, f"c:{clean_tag}", current_idx)
+                    if c_start is None: break
+                    found_any = True
+
+                    sb, _ = self.find_block_content(content, c_start)
+                    if sb is not None:
+                        block_inner = content[sb+1 : c_end-1]
+
+                        data["tech_tier"].extend(re.findall(r"effect_starting_technology_tier_\d+_tech\s*=\s*yes", block_inner))
+                        data["politics"].extend(re.findall(r"effect_starting_politics_[a-z_]+\s*=\s*yes", block_inner))
+                        data["techs_researched"].extend(re.findall(r"add_technology_researched\s*=\s*[a-zA-Z0-9_]+", block_inner))
+                        data["laws"].extend([l.strip() for l in re.findall(r"^\s*(activate_law\s*=\s*.*)$", block_inner, re.MULTILINE)])
+
+                        inst_pattern = re.compile(r"(set_institution_[a-zA-Z0-9_]+)\s*=\s*", re.MULTILINE)
+                        cursor = 0
+                        while True:
+                            match = inst_pattern.search(block_inner, cursor)
+                            if not match: break
+
+                            next_char_idx = match.end()
+                            while next_char_idx < len(block_inner) and block_inner[next_char_idx].isspace():
+                                next_char_idx += 1
+
+                            if next_char_idx < len(block_inner) and block_inner[next_char_idx] == '{':
+                                b_start, b_end = self.find_block_content(block_inner, next_char_idx)
+                                if b_start is not None:
+                                    data["institutions"].append(block_inner[match.start():b_end].strip())
+                                    cursor = b_end
+                                else:
+                                    cursor = match.end()
+                            else:
+                                line_end = block_inner.find('\n', match.end())
+                                if line_end == -1: line_end = len(block_inner)
+                                data["institutions"].append(block_inner[match.start():line_end].strip())
+                                cursor = line_end
+                    current_idx = c_end
+
+        if not found_any: return None
+        return data
+
     def get_nearest_vic3_color(self, rgb):
         colors = {
             "white": (255, 255, 255), "black": (10, 10, 10), "red": (180, 0, 0),
@@ -277,7 +344,30 @@ class Vic3Logic:
         hist_dir = os.path.join(self.mod_path, "common/history/countries")
         os.makedirs(hist_dir, exist_ok=True)
         hist_file = os.path.join(hist_dir, f"{tag} - {name}.txt")
-        laws = """
+
+        # Extended Data Extraction
+        ext_data = self.get_extended_history_data(old_tag)
+
+        laws_block = ""
+        tech_tier_str = ""
+        techs_res_str = ""
+        politics_str = ""
+        inst_str = ""
+
+        if ext_data:
+            if ext_data["laws"]:
+                laws_block = "\n\t" + "\n\t".join(list(dict.fromkeys(ext_data["laws"])))
+            if ext_data["tech_tier"]:
+                tech_tier_str = "\n\t" + "\n\t".join(list(dict.fromkeys(ext_data["tech_tier"])))
+            if ext_data["techs_researched"]:
+                techs_res_str = "\n\t" + "\n\t".join(list(dict.fromkeys(ext_data["techs_researched"])))
+            if ext_data["politics"]:
+                politics_str = "\n\t" + "\n\t".join(list(dict.fromkeys(ext_data["politics"])))
+            if ext_data["institutions"]:
+                inst_str = "\n\t" + "\n\t".join(list(dict.fromkeys(ext_data["institutions"])))
+
+        if not laws_block:
+            laws_block = """
     activate_law = law_type:law_monarchy
     activate_law = law_type:law_autocracy
     activate_law = law_type:law_peasant_levies
@@ -289,21 +379,28 @@ class Vic3Logic:
     activate_law = law_type:law_per_capita_tax
     activate_law = law_type:law_appointed_bureaucrats
 """
+
+        if not tech_tier_str:
+             tech_tier_str = "effect_starting_technology_tier_1_tech = yes"
+
         ig_ruler = "ig_landowners" if gov_type == "monarchy" else "ig_intelligentsia"
 
-        tech_tier = self.get_tech_tier_from_history(old_tag)
-        if not tech_tier: tech_tier = "effect_starting_technology_tier_1_tech = yes"
+        hist_content = f"""COUNTRIES = {{
+    c:{tag} ?= {{
+        {tech_tier_str}
+        set_tax_level = medium
+        {laws_block}
+        {politics_str}
+        {techs_res_str}
+        {inst_str}
 
-        hist_content = f"""c:{tag} = {{
-    {tech_tier}
-    set_tax_level = medium
-    {laws}
-    create_character = {{
-        first_name = "Alexander" 
-        last_name = "Modman"
-        birth_date = 1800.1.1
-        ruler = yes
-        interest_group = {ig_ruler}
+        create_character = {{
+            first_name = "Alexander"
+            last_name = "Modman"
+            birth_date = 1800.1.1
+            ruler = yes
+            interest_group = {ig_ruler}
+        }}
     }}
 }}
 """
