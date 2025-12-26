@@ -1028,12 +1028,12 @@ class Vic3Logic:
                 if re.search(r"color\s*=", new_block):
                     new_block = re.sub(r"color\s*=\s*\{[^}]+\}", f"color = {{ {r} {g} {b} }}", new_block)
                 else:
-                    new_block = new_block.rstrip("} \t\n") + f"\n\tcolor = {{ {r} {g} {b} }}\n}}"
+                    new_block = new_block[:new_block.rfind('}')] + f"\n\tcolor = {{ {r} {g} {b} }}\n}}"
                 if capital:
                     if re.search(r"(capital|capital_state)\s*=", new_block):
                          new_block = re.sub(r"(capital|capital_state)\s*=\s*[A-Za-z0-9_]+", f"capital = {capital}", new_block)
                     else:
-                         new_block = new_block.rstrip("} \t\n") + f"\n\tcapital = {capital}\n}}"
+                         new_block = new_block[:new_block.rfind('}')] + f"\n\tcapital = {capital}\n}}"
                 content = content[:start] + new_block + content[end:]
                 with open(filepath, 'w', encoding='utf-8-sig') as f: f.write(content)
                 self.log(f"[SAVE] Updated definitions in {filepath}", 'success')
@@ -1268,7 +1268,7 @@ class Vic3Logic:
 
             # Add if missing
             if not re.search(r"activate_law\s*=\s*(law_type:)?" + re.escape(law), new_block):
-                 new_block = new_block.rstrip("} \t\n") + f"\n\t\tactivate_law = law_type:{law}\n\t}}"
+                 new_block = new_block[:new_block.rfind('}')] + f"\n\t\tactivate_law = law_type:{law}\n\t}}"
 
         # Ruler
         char_idx = 0
@@ -1292,7 +1292,7 @@ class Vic3Logic:
             if ruler_info["ig"]: rb = re.sub(r'interest_group\s*=\s*[A-Za-z0-9_]+', f'interest_group = {ruler_info["ig"]}', rb)
             if ruler_info["ideology"]:
                 rb = re.sub(r'\s*trait\s*=\s*ideology_[a-z_]+', '', rb)
-                rb = rb.rstrip("} \t\n") + f"\n\t\ttrait = {ruler_info['ideology']}\n\t}}"
+                rb = rb[:rb.rfind('}')] + f"\n\t\ttrait = {ruler_info['ideology']}\n\t}}"
             new_block = new_block[:ruler_start] + rb + new_block[ruler_end:]
         else:
             # Create new ruler block if none found (overrides/adds to vanilla)
@@ -1307,7 +1307,7 @@ class Vic3Logic:
             trait = {ruler_info['ideology']}
         }}"""
             # Insert before closing brace of country block
-            new_block = new_block.rstrip("} \t\n") + new_ruler_block + "\n\t}"
+            new_block = new_block[:new_block.rfind('}')] + new_ruler_block + "\n\t}"
 
         target_content = target_content[:s] + new_block + target_content[e:]
         with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(target_content)
@@ -1511,7 +1511,7 @@ class Vic3Logic:
         if s:
             # Append to existing block
             block = content[s:e]
-            new_block = block.rstrip("} \t\n") + "\n" + entry + "\n\t}"
+            new_block = block[:block.rfind('}')] + "\n" + entry + "\n\t}"
             content = content[:s] + new_block + content[e:]
         else:
             # Create new block
@@ -1621,7 +1621,7 @@ class Vic3Logic:
             # Regex: set_relations = { country = c:TARGET value = ... }
             block = re.sub(r"set_relations\s*=\s*\{[^}]*c:" + re.escape(clean_target) + r"\b[^}]*\}", "", block)
             # Append new
-            new_block = block.rstrip("} \t\n") + "\n" + entry + "\n\t}"
+            new_block = block[:block.rfind('}')] + "\n" + entry + "\n\t}"
             content = content[:s] + new_block + content[e:]
         else:
              # Create new block
