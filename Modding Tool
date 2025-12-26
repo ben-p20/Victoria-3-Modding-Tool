@@ -1862,6 +1862,7 @@ class App(tk.Tk):
         self.style.configure('TFrame', background=BG_COLOR)
         self.style.configure('TLabelframe', background=BG_COLOR, foreground=FG_COLOR, bordercolor=SECONDARY_BG)
         self.style.configure('TLabelframe.Label', background=BG_COLOR, foreground=ACCENT_COLOR, font=('Segoe UI', 10, 'bold'))
+        self.style.configure('WhiteBorder.TFrame', background=FG_COLOR)
         self.style.configure('TButton', background=SECONDARY_BG, foreground=FG_COLOR, borderwidth=1, focuscolor=SECONDARY_BG)
         self.style.map('TButton', background=[('active', ACCENT_COLOR), ('disabled', '#2a2a2a')], foreground=[('disabled', '#666666')])
         self.style.configure('TEntry', fieldbackground=ENTRY_BG, foreground=FG_COLOR, bordercolor=SECONDARY_BG, lightcolor=SECONDARY_BG, darkcolor=SECONDARY_BG)
@@ -1925,9 +1926,12 @@ class App(tk.Tk):
         ttk.Button(header_frame, text="Backup Current Mod", command=self.start_backup).pack(side=tk.RIGHT, padx=5)
         ttk.Button(header_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
 
-        # Main Content Box (Untitled LabelFrame)
-        path_frame = ttk.LabelFrame(main_frame, padding=15)
-        path_frame.pack(fill=tk.X, pady=(0, 10))
+        # Main Content Box (Fake LabelFrame to remove top gap)
+        path_border_frame = ttk.Frame(main_frame, style='WhiteBorder.TFrame')
+        path_border_frame.pack(fill=tk.X, pady=(0, 10))
+
+        path_frame = ttk.Frame(path_border_frame, padding=15)
+        path_frame.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
         self.path_var = tk.StringVar()
         ttk.Label(path_frame, text="Mod Directory:").pack(side=tk.LEFT, padx=(0, 5))
