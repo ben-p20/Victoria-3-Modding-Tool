@@ -2043,7 +2043,24 @@ class Vic3Logic:
         clean_tag = tag.replace("c:", "").strip()
 
         # Prepare content strings
-        princ_strs = [f"{p['key']}_{p['level']}" for p in data["principles"]]
+        # FIX: Ensure the identity's core required principle is first
+        pb_identity = data.get("identity", "")
+        req_principles = self.PB_PRIMARY_PRINCIPLE_OPTIONS.get(pb_identity, [])
+
+        principles_sorted = data["principles"][:]
+        # Find if any principle is in req_principles
+        found_idx = -1
+        for i, p in enumerate(principles_sorted):
+            if p["key"] in req_principles:
+                found_idx = i
+                break
+
+        if found_idx > 0:
+            # Move to front
+            p = principles_sorted.pop(found_idx)
+            principles_sorted.insert(0, p)
+
+        princ_strs = [f"{p['key']}_{p['level']}" for p in principles_sorted]
 
         principle_1 = princ_strs[0] if princ_strs else ""
         extra_principles = princ_strs[1:] if len(princ_strs) > 1 else []
