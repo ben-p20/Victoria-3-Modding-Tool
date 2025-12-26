@@ -1023,7 +1023,7 @@ class Vic3Logic:
                         return rgb, capital, path
         return None, None, None
 
-    def save_country_definition(self, tag, rgb, capital, filepath):
+    def save_country_definition(self, tag, rgb, capital, filepath, cultures=None, religion=None):
         self.perform_auto_backup()
         if not filepath or not os.path.exists(filepath):
             self.log("[ERROR] Definition file not found to update.", 'error')
@@ -1049,6 +1049,19 @@ class Vic3Logic:
                          new_block = re.sub(r"(capital|capital_state)\s*=\s*[A-Za-z0-9_]+", f"capital = {capital}", new_block)
                     else:
                          new_block = new_block[:new_block.rfind('}')] + f"\n\tcapital = {capital}\n}}"
+                if cultures:
+                    # cultures is a list of strings
+                    c_str = " ".join(cultures)
+                    if re.search(r"cultures\s*=", new_block):
+                         new_block = re.sub(r"cultures\s*=\s*\{[^}]+\}", f"cultures = {{ {c_str} }}", new_block)
+                    else:
+                         new_block = new_block[:new_block.rfind('}')] + f"\n\tcultures = {{ {c_str} }}\n}}"
+                if religion:
+                    if re.search(r"religion\s*=", new_block):
+                         new_block = re.sub(r"religion\s*=\s*[A-Za-z0-9_]+", f"religion = {religion}", new_block)
+                    else:
+                         new_block = new_block[:new_block.rfind('}')] + f"\n\treligion = {religion}\n}}"
+
                 content = content[:start] + new_block + content[end:]
                 with open(filepath, 'w', encoding='utf-8-sig') as f: f.write(content)
                 self.log(f"[SAVE] Updated definitions in {filepath}", 'success')
@@ -1744,7 +1757,8 @@ class Vic3Logic:
             ("common/history/population", True),
             ("common/history/states", True),
             ("common/history/trade", True),
-            ("common/history/power_blocs", True)
+            ("common/history/power_blocs", True),
+            ("common/religions", True)
         ]
 
         copied_count = 0
@@ -1829,6 +1843,213 @@ class Vic3Logic:
         except Exception as e:
             self.log(f"[ERROR] Auto-backup failed: {e}", 'error')
 
+    # --- RELIGION & CULTURE LOGIC ---
+    def scan_culture_definitions(self):
+        """Scans vanilla 00_cultures.txt for options."""
+        if not self.vanilla_path: return {}, [], [], [], [], []
+
+        # Try both game/common and common
+        base = os.path.join(self.vanilla_path, "game", "common", "cultures")
+        if not os.path.exists(base):
+             base = os.path.join(self.vanilla_path, "common", "cultures")
+
+        fpath = os.path.join(base, "00_cultures.txt")
+        if not os.path.exists(fpath): return {}, [], [], [], [], []
+
+        heritages = set()
+        languages = set()
+        traditions = set()
+        graphics = set()
+        ethnicities = set()
+        culture_data = {}
+
+        try:
+            with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+             with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
+
+        cursor = 0
+        while True:
+            m = re.search(r"^([a-z0-9_]+)\s*=\s*\{", content[cursor:], re.MULTILINE)
+            if not m: break
+            key = m.group(1)
+            start = cursor + m.start()
+            s, e = self.find_block_content(content, cursor + m.end() - 1)
+
+            if s:
+                block = content[s:e]
+                h = re.search(r"heritage\s*=\s*([a-z0-9_]+)", block);
+                if h: heritages.add(h.group(1))
+                l = re.search(r"language\s*=\s*([a-z0-9_]+)", block);
+                if l: languages.add(l.group(1))
+                g = re.search(r"graphics\s*=\s*([a-z0-9_]+)", block);
+                if g: graphics.add(g.group(1))
+
+                tm = re.search(r"traditions\s*=\s*\{", block)
+                if tm:
+                    ts, te = self.find_block_content(block, tm.end()-1)
+                    if ts:
+                        # Use inner content to avoid adding braces to list
+                        for t in block[ts+1:te-1].split():
+                            t_clean = t.strip()
+                            if t_clean and not t_clean.startswith("#"): traditions.add(t_clean)
+
+                em = re.search(r"ethnicities\s*=\s*\{", block)
+                if em:
+                    es, ee = self.find_block_content(block, em.end()-1)
+                    if es:
+                        for ematch in re.finditer(r"=\s*([a-z0-9_]+)", block[es:ee]): ethnicities.add(ematch.group(1))
+
+                names = {}
+                for list_name in ["male_common_first_names", "female_common_first_names", "noble_last_names", "common_last_names", "male_regal_first_names", "female_regal_first_names"]:
+                    lm = re.search(list_name + r"\s*=\s*\{", block)
+                    if lm:
+                        ls, le = self.find_block_content(block, lm.end()-1)
+                        # Store inner content only to avoid double bracing on save
+                        if ls: names[list_name] = block[ls+1:le-1].strip()
+                culture_data[key] = names
+                cursor = e
+            else:
+                cursor = start + 1
+
+        return culture_data, sorted(list(heritages)), sorted(list(languages)), sorted(list(traditions)), sorted(list(graphics)), sorted(list(ethnicities))
+
+    def scan_all_religions_and_heritages(self):
+        paths = []
+        if self.vanilla_path:
+             paths.append(os.path.join(self.vanilla_path, "game", "common", "religions"))
+             paths.append(os.path.join(self.vanilla_path, "common", "religions"))
+        if self.mod_path:
+             paths.append(os.path.join(self.mod_path, "common", "religions"))
+
+        religions = set()
+        heritages = set()
+
+        for p in paths:
+            if not os.path.exists(p): continue
+            for root, _, files in os.walk(p):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    try:
+                        with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
+
+                    cursor = 0
+                    while True:
+                        m = re.search(r"^([a-z0-9_]+)\s*=\s*\{", content[cursor:], re.MULTILINE)
+                        if not m: break
+                        key = m.group(1)
+                        if key.lower() not in ["technically", "random"]: religions.add(key)
+
+                        start = cursor + m.start()
+                        s, e = self.find_block_content(content, cursor + m.end()-1)
+                        if s:
+                             h = re.search(r"heritage\s*=\s*([a-z0-9_]+)", content[s:e])
+                             if h: heritages.add(h.group(1))
+                             cursor = e
+                        else:
+                             cursor = start + 1
+        return sorted(list(religions)), sorted(list(heritages))
+
+    def save_new_culture(self, key, name, color, religion, heritage, language, traditions, graphics, ethnicities, name_data):
+        self.perform_auto_backup()
+        mod_name = os.path.basename(self.mod_path)
+
+        # 1. Definitions
+        cul_dir = os.path.join(self.mod_path, "common", "cultures")
+        os.makedirs(cul_dir, exist_ok=True)
+        fpath = os.path.join(cul_dir, f"{mod_name}_cultures.txt")
+
+        # Build block
+        t_str = " ".join(traditions)
+
+        eth_str = ""
+        for i, eth in enumerate(ethnicities):
+            eth_str += f"\t\t10 = {eth}\n" # Default weight 10
+
+        name_keys = ["male_common_first_names", "female_common_first_names", "noble_last_names", "common_last_names", "male_regal_first_names", "female_regal_first_names"]
+        names_block = ""
+        for k in name_keys:
+            v = name_data.get(k, "")
+            names_block += f"\t{k} = {{ {v} }}\n"
+
+        content_block = f"""
+{key} = {{
+\tcolor = rgb{{ {color[0]} {color[1]} {color[2]} }}
+\treligion = {religion}
+\theritage = {heritage}
+\tlanguage = {language}
+\ttraditions = {{ {t_str} }}
+\tgraphics = {graphics}
+\tobsessions = {{}}
+\tethnicities = {{
+{eth_str}\t}}
+{names_block}}}
+"""
+        # Append or Create
+        mode = 'a' if os.path.exists(fpath) else 'w'
+        try:
+            with open(fpath, mode, encoding='utf-8-sig') as f:
+                if mode == 'a': f.write("\n")
+                f.write(content_block)
+        except Exception as e:
+            self.log(f"[ERROR] Failed to save culture: {e}", 'error')
+            return
+
+        # 2. Localization
+        loc_dir = os.path.join(self.mod_path, "localization", "english")
+        os.makedirs(loc_dir, exist_ok=True)
+        lpath = os.path.join(loc_dir, f"{mod_name}_cultures_l_english.yml")
+
+        if not os.path.exists(lpath):
+             with open(lpath, 'w', encoding='utf-8-sig') as f: f.write("l_english:\n")
+
+        with open(lpath, 'a', encoding='utf-8-sig') as f:
+            f.write(f' {key}:0 "{name}"\n')
+
+        self.log(f"[SUCCESS] Saved culture {key}", 'success')
+
+    def save_new_religion(self, key, name, color, heritage, icon_path):
+        self.perform_auto_backup()
+        mod_name = os.path.basename(self.mod_path)
+
+        # 1. Definitions
+        rel_dir = os.path.join(self.mod_path, "common", "religions")
+        os.makedirs(rel_dir, exist_ok=True)
+        fpath = os.path.join(rel_dir, f"{mod_name}_religions.txt")
+
+        r, g, b = color[0]/255.0, color[1]/255.0, color[2]/255.0
+
+        content_block = f"""
+{key} = {{
+\ticon = "{icon_path}"
+\theritage = {heritage}
+\tcolor = {{ {r:.2f} {g:.2f} {b:.2f} }}
+}}
+"""
+        mode = 'a' if os.path.exists(fpath) else 'w'
+        try:
+            with open(fpath, mode, encoding='utf-8-sig') as f:
+                if mode == 'a': f.write("\n")
+                f.write(content_block)
+        except Exception as e:
+            self.log(f"[ERROR] Failed to save religion: {e}", 'error')
+            return
+
+        # 2. Localization
+        loc_dir = os.path.join(self.mod_path, "localization", "english")
+        os.makedirs(loc_dir, exist_ok=True)
+        lpath = os.path.join(loc_dir, f"{mod_name}_religions_l_english.yml")
+
+        if not os.path.exists(lpath):
+             with open(lpath, 'w', encoding='utf-8-sig') as f: f.write("l_english:\n")
+
+        with open(lpath, 'a', encoding='utf-8-sig') as f:
+            f.write(f' {key}:0 "{name}"\n')
+
+        self.log(f"[SUCCESS] Saved religion {key}", 'success')
+
     # --- POWER BLOC LOGIC ---
     def get_all_power_blocs(self):
         """Scans history/global for existing power blocs."""
@@ -1874,18 +2095,18 @@ class Vic3Logic:
         "identity_trade_league",
         "identity_sovereign_empire",
         "identity_ideological_union",
-        "identity_religious_convocation",
-        "identity_military_treaty",
-        "identity_cultural_commonwealth"
+        "identity_military_treaty_organization",
+        "identity_religious",
+        "identity_cultural"
     ]
 
     PB_EXCLUSIVE_PRINCIPLES = {
         "identity_trade_league": ["principle_internal_trade", "principle_external_trade"],
         "identity_sovereign_empire": ["principle_vassalization", "principle_exploit_members"],
         "identity_ideological_union": ["principle_ideological_truth", "principle_creative_legislature"],
-        "identity_religious_convocation": ["principle_divine_economics", "principle_sacred_civics"],
-        "identity_military_treaty": ["principle_aggressive_coordination", "principle_defensive_cooperation"],
-        "identity_cultural_commonwealth": ["principle_shared_canon"]
+        "identity_religious": ["principle_divine_economics", "principle_sacred_civics"],
+        "identity_military_treaty_organization": ["principle_aggressive_coordination", "principle_defensive_cooperation"],
+        "identity_cultural": ["principle_shared_canon"]
     }
 
     PB_GLOBAL_PRINCIPLES = [
@@ -1915,15 +2136,15 @@ class Vic3Logic:
             "principle_creative_legislature",
             "principle_ideological_truth"
         ],
-        "identity_religious_convocation": [
+        "identity_religious": [
             "principle_divine_economics",
             "principle_sacred_civics"
         ],
-        "identity_military_treaty": [
+        "identity_military_treaty_organization": [
             "principle_defensive_cooperation",
             "principle_aggressive_coordination"
         ],
-        "identity_cultural_commonwealth": [
+        "identity_cultural": [
             "principle_shared_canon",
             "principle_freedom_of_movement"
         ]
@@ -2195,18 +2416,353 @@ class Vic3Logic:
 
                 s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
                 if s is not None:
-                    # We just remove the whole country block from this file?
-                    # Generally yes, if it only contains the PB def.
-                    # Or we can just empty it? Removing is cleaner.
-
-                    # Check if it has other stuff?
-                    # For safety, let's just remove the block.
                     content = content[:s] + content[e:]
-                    # Clean up empty lines?
-
                     with open(path, 'w', encoding='utf-8-sig') as f: f.write(content)
                     self.log(f"[REMOVE] Power Bloc removed for {clean_tag}", 'success')
                     return
+
+    # --- STATE MANAGER LOGIC ---
+    def get_state_homelands(self, state_name):
+        """Scans history/states for add_homeland lines."""
+        # Check mod first, then vanilla
+        paths = []
+        if self.mod_path: paths.append(os.path.join(self.mod_path, "common/history/states"))
+        if self.vanilla_path: paths.append(os.path.join(self.vanilla_path, "game/common/history/states"))
+
+        clean_state = self.format_state_clean(state_name)
+        if not clean_state: return None, []
+
+        for p in paths:
+            if not os.path.exists(p): continue
+            for root, _, files in os.walk(p):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    fpath = os.path.join(root, file)
+                    try:
+                        with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
+
+                    s, e = self.get_block_range_safe(content, f"s:{clean_state}")
+                    if s is not None:
+                        # Found the state block
+                        block = content[s:e]
+                        # Extract homelands (allow colons for cu:culture)
+                        homelands = re.findall(r"add_homeland\s*=\s*([A-Za-z0-9_:]+)", block)
+                        return fpath, list(set(homelands)) # unique
+        return None, []
+
+    def save_state_homelands(self, state_name, homelands_list):
+        self.perform_auto_backup()
+        clean_state = self.format_state_clean(state_name)
+
+        # 1. Find existing file or determine where to create
+        fpath, _ = self.get_state_homelands(clean_state)
+
+        if not fpath:
+            # Need to copy from vanilla? Or create new?
+            # Creating new file for homelands requires defining s:STATE = { ... }
+            # If we don't have the original file path, we check vanilla again to copy it.
+            if self.vanilla_path:
+                v_path = os.path.join(self.vanilla_path, "game/common/history/states")
+                for root, _, files in os.walk(v_path):
+                    for file in files:
+                        if not file.endswith(".txt"): continue
+                        vf = os.path.join(root, file)
+                        with open(vf, 'r', encoding='utf-8', errors='ignore') as f: c = f.read()
+                        if f"s:{clean_state}" in c:
+                            # Found in vanilla, copy to mod
+                            mod_rel = os.path.relpath(vf, os.path.join(self.vanilla_path, "game"))
+                            fpath = os.path.join(self.mod_path, mod_rel)
+                            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                            shutil.copy2(vf, fpath)
+                            break
+
+            if not fpath:
+                # Still not found? Create generic
+                fpath = os.path.join(self.mod_path, "common/history/states/99_mod_states.txt")
+                os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                if not os.path.exists(fpath):
+                    with open(fpath, 'w', encoding='utf-8-sig') as f: f.write("STATES = {\n}")
+
+        # 2. Modify file
+        try:
+            with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+            with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
+
+        s, e = self.get_block_range_safe(content, f"s:{clean_state}")
+
+        new_homelands_str = "\n".join([f"\t\tadd_homeland = {h}" for h in homelands_list])
+
+        if s is not None:
+            block = content[s:e]
+            # Remove existing add_homeland lines
+            block = re.sub(r"\s*add_homeland\s*=\s*[A-Za-z0-9_:]+", "", block)
+            # Insert new ones before closing brace
+            last_brace = block.rfind('}')
+            new_block = block[:last_brace] + "\n" + new_homelands_str + "\n\t}"
+            content = content[:s] + new_block + content[e:]
+        else:
+            # Create block if new file
+            new_entry = f"\n\ts:{clean_state} = {{\n{new_homelands_str}\n\t}}"
+            # Append to STATES block if exists, or append to file
+            ss, se = self.get_block_range_safe(content, "STATES")
+            if ss is not None:
+                content = content[:se-1] + new_entry + "\n}" + content[se:]
+            else:
+                content += f"\nSTATES = {{{new_entry}\n}}"
+
+        with open(fpath, 'w', encoding='utf-8-sig') as f: f.write(content)
+        self.log(f"[SAVE] Homelands for {clean_state} saved to {os.path.basename(fpath)}", 'success')
+
+    def get_state_pops(self, state_name):
+        clean_state = self.format_state_clean(state_name)
+        if not clean_state: return []
+
+        # Scan mod folder only? Or vanilla too? Usually we edit what's active.
+        # If user wants to edit vanilla pops, we might need to copy file first.
+        # But 'pops' logic is usually split.
+        # For simplicity, we scan mod + vanilla, but if we edit a vanilla pop, we need to handle file copying.
+
+        pop_dirs = []
+        if self.mod_path: pop_dirs.append(os.path.join(self.mod_path, "common/history/pops"))
+        if self.vanilla_path: pop_dirs.append(os.path.join(self.vanilla_path, "game/common/history/pops"))
+
+        pops = [] # list of dicts
+
+        for p_dir in pop_dirs:
+            if not os.path.exists(p_dir): continue
+            is_mod_file = self.mod_path in p_dir
+
+            for root, _, files in os.walk(p_dir):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    fpath = os.path.join(root, file)
+                    try:
+                        with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
+
+                    # Find s:STATE
+                    # Note: Need to loop as regex findall doesn't give block contents easily for nested stuff
+                    cursor = 0
+                    while True:
+                        s, e = self.get_block_range_safe(content, f"s:{clean_state}", cursor)
+                        if s is None: break
+
+                        state_block = content[s:e]
+                        state_inner_start = content.find('{', s) + 1
+
+                        # Find region_state:TAG inside
+                        rs_cursor = 0
+                        while True:
+                            m_rs = re.search(r"region_state:([A-Za-z0-9_]+)\s*=\s*\{", state_block[rs_cursor:])
+                            if not m_rs: break
+
+                            tag = m_rs.group(1)
+                            rs_abs_start = rs_cursor + m_rs.start()
+                            rs_s, rs_e = self.find_block_content(state_block, rs_cursor + m_rs.end() - 1)
+
+                            if rs_s:
+                                rs_block = state_block[rs_s:rs_e]
+                                # Find create_pop inside
+                                cp_cursor = 0
+                                while True:
+                                    m_cp = re.search(r"create_pop\s*=\s*\{", rs_block[cp_cursor:])
+                                    if not m_cp: break
+
+                                    cp_s, cp_e = self.find_block_content(rs_block, cp_cursor + m_cp.end() - 1)
+                                    if cp_s:
+                                        cp_inner = rs_block[cp_s:cp_e]
+
+                                        # Extract values
+                                        cul = re.search(r"culture\s*=\s*([A-Za-z0-9_]+)", cp_inner)
+                                        rel = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", cp_inner)
+                                        size = re.search(r"size\s*=\s*(\d+)", cp_inner)
+
+                                        if cul and size:
+                                            # Calculate absolute file indices for the pop block start/end
+                                            # This is tricky due to nesting relative offsets
+                                            # File -> s:STATE (s) -> region_state (rs_s relative to s) -> create_pop (cp_s relative to rs_s)
+                                            # Wait, block ranges are indices into the string passed.
+
+                                            # s is index in 'content'
+                                            # rs_s is index in 'state_block' (which starts at s) -> abs = s + rs_s
+                                            # cp_s is index in 'rs_block' (which starts at s + rs_s) -> abs = s + rs_s + cp_s
+
+                                            # Actually find_block_content returns indices relative to the text string provided.
+                                            # state_block = content[s:e].
+                                            # rs_s, rs_e are indices within state_block.
+
+                                            abs_start = s + rs_s + cp_s - len("create_pop = {") # Approx? No, find_block_content gives content inside braces.
+                                            # We need the whole block range including "create_pop = { }" to replace it?
+                                            # Or just identifying info.
+
+                                            # Let's verify find_block_content return values.
+                                            # It returns start (opening brace) and end (closing brace + 1) index.
+
+                                            # To update a pop, we need to uniquely identify it.
+                                            # File path + index is good.
+
+                                            # Correct offsets:
+                                            # rs_start_in_state = rs_s (start of inner content)
+                                            # cp_start_in_rs = cp_s (start of inner content of pop)
+
+                                            # We want the start of "create_pop = {" line effectively.
+                                            # Let's store the index of the opening brace of the pop block in the file.
+
+                                            # s: start of state block opening brace (roughly) in content.
+                                            # content[s:e] is "s:STATE = { ... }"
+                                            # Actually get_block_range_safe returns match.start() (start of "s:STATE") and end brace pos.
+
+                                            # s = start of "s:STATE"
+                                            # state_block = content[s:e]
+
+                                            # rs_match in state_block. rs_abs_start relative to state_block.
+                                            # rs_s, rs_e = inner content indices relative to state_block.
+
+                                            # cp_match in rs_block (which is state_block[rs_s:rs_e]).
+                                            # cp_s, cp_e relative to rs_block.
+
+                                            # Real file index of pop content start = s + rs_s + cp_s
+
+                                            # Store identifying info
+                                            pops.append({
+                                                "file": fpath,
+                                                "is_mod": is_mod_file,
+                                                "region_tag": tag,
+                                                "culture": cul.group(1),
+                                                "religion": rel.group(1) if rel else "",
+                                                "size": int(size.group(1)),
+                                                # Use a simple signature to find it later instead of fragile indices?
+                                                # Or regex match nth occurrence?
+                                                # Indices are best if we don't modify file in between.
+                                                "indices": {
+                                                    "state_block_start": s,
+                                                    "rs_content_start": s + rs_s,
+                                                    "pop_content_start": s + rs_s + cp_s,
+                                                    "pop_content_end": s + rs_s + cp_e
+                                                }
+                                            })
+
+                                        cp_cursor = cp_e
+                                    else:
+                                        cp_cursor += 1
+                                rs_cursor = rs_e
+                            else:
+                                rs_cursor += 1
+
+                        cursor = e
+
+        return pops
+
+    def save_state_pops_total(self, state_name, new_total, pop_data_list):
+        # 1. Calculate distribution
+        current_total = sum(p['size'] for p in pop_data_list)
+        diff = new_total - current_total
+        if diff == 0: return
+
+        count = len(pop_data_list)
+        if count == 0: return
+
+        per_pop = diff // count
+        remainder = diff % count
+
+        # Apply changes to data objects first
+        for i, p in enumerate(pop_data_list):
+            change = per_pop + (1 if i < remainder else 0)
+            p['size'] += change
+            if p['size'] < 0: p['size'] = 0 # Prevent negative
+
+        # 2. Group by file to minimize open/close
+        files_map = {}
+        for p in pop_data_list:
+            if p['file'] not in files_map: files_map[p['file']] = []
+            files_map[p['file']].append(p)
+
+        # 3. Process each file
+        for fpath, pops in files_map.items():
+            # Check if we need to copy to mod directory
+            target_path = fpath
+            if self.vanilla_path and fpath.startswith(self.vanilla_path):
+                # Copy to mod
+                mod_rel = os.path.relpath(fpath, os.path.join(self.vanilla_path, "game"))
+                target_path = os.path.join(self.mod_path, mod_rel)
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                if not os.path.exists(target_path):
+                    shutil.copy2(fpath, target_path)
+
+            # Read (possibly new) file
+            try:
+                with open(target_path, 'r', encoding='utf-8-sig') as f: content = f.read()
+            except:
+                with open(target_path, 'r', encoding='utf-8') as f: content = f.read()
+
+            # We must apply changes from bottom to top to preserve indices!
+            # Sort pops by index descending
+            pops.sort(key=lambda x: x['indices']['pop_content_start'], reverse=True)
+
+            for p in pops:
+                # If we moved file (vanilla -> mod), indices might be same if copied exactly.
+                # However, if we are processing multiple pops in the same file, updating one shifts indices of others.
+                # BUT since we sort reverse, the 'start' indices of earlier pops remain valid.
+
+                # Re-verify/Find block
+                # Since content might be different if we copied vanilla file? No, it's a copy.
+                # But to be safe, let's use the indices relative to the logic we scanned.
+
+                # Limitation: 'indices' are from the scan of 'fpath'. If 'target_path' is different (copy), content is same.
+                # But if we modify the content for pop N, pop N-1's indices are fine.
+
+                s = p['indices']['pop_content_start']
+                e = p['indices']['pop_content_end']
+
+                # Extract the exact block to ensure we match
+                # (Safety check: does content[s:e] look like the pop?)
+                # Actually, we just need to replace the 'size = X' line inside the block content[s:e]
+
+                block_inner = content[s:e]
+                new_inner = re.sub(r"size\s*=\s*\d+", f"size = {p['size']}", block_inner)
+
+                content = content[:s] + new_inner + content[e:]
+
+            with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(content)
+            self.log(f"[POPS] Updated total population in {os.path.basename(target_path)}", 'success')
+
+    def save_single_pop(self, pop_entry, new_culture, new_religion, new_size):
+        # Similar logic to above but for one entry
+        fpath = pop_entry['file']
+        target_path = fpath
+
+        # Copy logic
+        if self.vanilla_path and fpath.startswith(self.vanilla_path):
+            mod_rel = os.path.relpath(fpath, os.path.join(self.vanilla_path, "game"))
+            target_path = os.path.join(self.mod_path, mod_rel)
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            if not os.path.exists(target_path):
+                shutil.copy2(fpath, target_path)
+
+        try:
+            with open(target_path, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+            with open(target_path, 'r', encoding='utf-8') as f: content = f.read()
+
+        s = pop_entry['indices']['pop_content_start']
+        e = pop_entry['indices']['pop_content_end']
+
+        block_inner = content[s:e]
+
+        # Replace values
+        new_inner = block_inner
+        new_inner = re.sub(r"culture\s*=\s*[A-Za-z0-9_]+", f"culture = {new_culture}", new_inner)
+        new_inner = re.sub(r"religion\s*=\s*[A-Za-z0-9_]+", f"religion = {new_religion}", new_inner)
+        new_inner = re.sub(r"size\s*=\s*\d+", f"size = {new_size}", new_inner)
+
+        content = content[:s] + new_inner + content[e:]
+
+        with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(content)
+        self.log(f"[POPS] Updated single pop in {os.path.basename(target_path)}", 'success')
 
 # =============================================================================
 #  GUI IMPLEMENTATION
@@ -2245,11 +2801,16 @@ class App(tk.Tk):
         self.style.configure('WhiteBorder.TFrame', background=FG_COLOR)
         self.style.configure('TButton', background=SECONDARY_BG, foreground=FG_COLOR, borderwidth=1, focuscolor=SECONDARY_BG)
         self.style.map('TButton', background=[('active', ACCENT_COLOR), ('disabled', '#2a2a2a')], foreground=[('disabled', '#666666')])
+        self.style.configure('BlackText.TButton', background=SECONDARY_BG, foreground="black", borderwidth=1, focuscolor=SECONDARY_BG)
+        self.style.map('BlackText.TButton', background=[('active', ACCENT_COLOR), ('disabled', '#2a2a2a')], foreground=[('disabled', '#666666')])
         self.style.configure('TEntry', fieldbackground=ENTRY_BG, foreground=FG_COLOR, bordercolor=SECONDARY_BG, lightcolor=SECONDARY_BG, darkcolor=SECONDARY_BG)
         self.style.configure('TCheckbutton', background=BG_COLOR, foreground=FG_COLOR)
         self.style.map('TCheckbutton', background=[('active', BG_COLOR)], indicatorcolor=[('selected', ACCENT_COLOR)])
         self.style.configure('TRadiobutton', background=BG_COLOR, foreground=FG_COLOR)
         self.style.map('TRadiobutton', background=[('active', BG_COLOR)], indicatorcolor=[('selected', ACCENT_COLOR)])
+
+        # Notebook Tab colors - Force black text
+        self.style.configure('TNotebook.Tab', foreground='black')
 
         # Combobox colors - Force black text for readability
         self.option_add('*TCombobox*Listbox.foreground', 'black')
@@ -2326,14 +2887,19 @@ class App(tk.Tk):
 
         # 2. Navigation
         nav_frame = ttk.Frame(main_frame)
-        nav_frame.pack(fill=tk.X, pady=(0, 10))
+        nav_frame.pack(fill=tk.X, pady=(0, 5))
         # Mod Manager button moved to header
         ttk.Button(nav_frame, text="Transfer States", command=self.show_transfer_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Country", command=self.show_create_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Military Creator", command=self.show_military_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Modify Country", command=self.show_country_mod_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Diplomacy", command=self.show_diplomacy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(nav_frame, text="Powerblock Manager", command=self.show_power_bloc_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        nav_frame_2 = ttk.Frame(main_frame)
+        nav_frame_2.pack(fill=tk.X, pady=(0, 10))
+        ttk.Button(nav_frame_2, text="Powerblock Manager", command=self.show_power_bloc_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(nav_frame_2, text="Religion/Culture", command=self.show_rel_cul_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(nav_frame_2, text="State Manager", command=self.show_state_manager_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         # 3. Dynamic Content
         self.content_frame = ttk.Frame(main_frame)
@@ -2776,6 +3342,20 @@ class App(tk.Tk):
         self.mc_color_prev = tk.Label(id_frame, text="     ", bg="#FFFFFF", relief="solid", borderwidth=1)
         self.mc_color_prev.grid(row=0, column=5)
 
+        # Cultural & Religious Identity
+        cr_frame = ttk.LabelFrame(f, text="Culture & Religion", padding=5)
+        cr_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(cr_frame, text="Primary Cultures (Space sep):").grid(row=0, column=0, sticky=tk.W)
+        self.mc_cultures = tk.StringVar()
+        ttk.Entry(cr_frame, textvariable=self.mc_cultures, width=40).grid(row=0, column=1, sticky=tk.W, padx=5)
+
+        ttk.Label(cr_frame, text="State Religion:").grid(row=0, column=2, sticky=tk.W, padx=(10,0))
+        self.mc_religion = tk.StringVar()
+        # Will populate this on load usually, or init
+        self.mc_religion_cb = ttk.Combobox(cr_frame, textvariable=self.mc_religion, state="normal", width=20)
+        self.mc_religion_cb.grid(row=0, column=3, sticky=tk.W, padx=5)
+
         # Internal Politics
         pol_frame = ttk.LabelFrame(f, text="Internal Politics", padding=5)
         pol_frame.pack(fill=tk.X, pady=5)
@@ -2837,6 +3417,18 @@ class App(tk.Tk):
         self.mc_name.set(name)
         self.mc_adj.set(adj)
 
+        # Get extended definition data (includes cultures, religion)
+        def_data = self.logic.get_country_data(tag)
+        if def_data["cultures"]: self.mc_cultures.set(def_data["cultures"])
+        if def_data["religion"]: self.mc_religion.set(def_data["religion"])
+
+        # Populate religion options dynamically
+        _, rels, _, _ = self.logic.scan_definitions_for_options()
+        # Also include any scanned from files
+        r_scanned, _ = self.logic.scan_all_religions_and_heritages()
+        all_rels = sorted(list(set(rels + r_scanned)))
+        self.mc_religion_cb['values'] = all_rels
+
         rgb, cap, _ = self.logic.load_country_definition_data(tag)
         if rgb:
             self.mc_rgb = list(rgb)
@@ -2871,7 +3463,11 @@ class App(tk.Tk):
         # Save Def
         _, _, path = self.logic.load_country_definition_data(tag) # Get path
         clean_cap = self.logic.format_state_clean(self.mc_capital.get())
-        self.logic.save_country_definition(tag, self.mc_rgb, clean_cap, path)
+
+        culs = self.mc_cultures.get().strip().split()
+        rel = self.mc_religion.get().strip()
+
+        self.logic.save_country_definition(tag, self.mc_rgb, clean_cap, path, cultures=culs, religion=rel)
 
         # Save History
         laws = []
@@ -3649,6 +4245,392 @@ class App(tk.Tk):
         valid_scopes = self.logic.collect_valid_scopes()
         self.logic.prune_orphaned_commanders(valid_scopes)
         self.log_message("Done.", 'success')
+
+    # --- MODE 8: RELIGION & CULTURE ---
+    def show_rel_cul_ui(self):
+        self.clear_content()
+        self.mode = "REL_CUL"
+        f = ttk.LabelFrame(self.content_frame, text="Religion & Culture Creator", padding=15)
+        f.pack(fill=tk.BOTH, expand=True)
+
+        tabs = ttk.Notebook(f)
+        tabs.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        tab_cult = ttk.Frame(tabs)
+        tab_rel = ttk.Frame(tabs)
+        tabs.add(tab_cult, text="Create Culture")
+        tabs.add(tab_rel, text="Create Religion")
+
+        # --- Create Culture UI ---
+        # Scan data
+        c_data, c_heritages, c_langs, c_trads, c_graphics, c_eths = self.logic.scan_culture_definitions()
+        # Scan religions for dropdown
+        r_keys, r_heritages = self.logic.scan_all_religions_and_heritages()
+
+        # Store data for use
+        self.cult_scan_data = c_data
+
+        # Build maps for clean display
+        self.heritage_map = {h.replace("heritage_", "").replace("_", " ").title(): h for h in c_heritages}
+        self.lang_map = {l.replace("language_", "").replace("_", " ").title(): l for l in c_langs}
+        self.trad_map = {t.replace("tradition_", "").replace("_", " ").title(): t for t in c_trads}
+
+        # Form
+        cf = ttk.Frame(tab_cult, padding=10)
+        cf.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(cf, text="Internal Key (e.g. new_culture):").grid(row=0, column=0, sticky=tk.W)
+        self.rc_c_key = tk.StringVar()
+        ttk.Entry(cf, textvariable=self.rc_c_key, width=20).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(cf, text="Localization Name:").grid(row=0, column=2, sticky=tk.W)
+        self.rc_c_name = tk.StringVar()
+        ttk.Entry(cf, textvariable=self.rc_c_name, width=20).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(cf, text="Color:").grid(row=1, column=0, sticky=tk.W)
+        self.rc_c_rgb = [255, 255, 255]
+        self.rc_c_color_prev = tk.Label(cf, text="     ", bg="#FFFFFF", relief="solid", borderwidth=1)
+        self.rc_c_color_prev.grid(row=1, column=1, sticky=tk.W, padx=5)
+        ttk.Button(cf, text="Pick", command=self.pick_cult_color).grid(row=1, column=2, sticky=tk.W)
+
+        # Dropdowns
+        ttk.Label(cf, text="Religion:").grid(row=2, column=0, sticky=tk.W)
+        self.rc_c_rel = tk.StringVar()
+        ttk.Combobox(cf, textvariable=self.rc_c_rel, values=r_keys, state="readonly").grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(cf, text="Heritage:").grid(row=2, column=2, sticky=tk.W)
+        self.rc_c_her = tk.StringVar()
+        ttk.Combobox(cf, textvariable=self.rc_c_her, values=sorted(list(self.heritage_map.keys())), state="readonly").grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(cf, text="Language:").grid(row=3, column=0, sticky=tk.W)
+        self.rc_c_lang = tk.StringVar()
+        ttk.Combobox(cf, textvariable=self.rc_c_lang, values=sorted(list(self.lang_map.keys())), state="readonly").grid(row=3, column=1, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(cf, text="Graphics:").grid(row=3, column=2, sticky=tk.W)
+        self.rc_c_graph = tk.StringVar()
+        ttk.Combobox(cf, textvariable=self.rc_c_graph, values=c_graphics, state="readonly").grid(row=3, column=3, sticky=tk.W, padx=5, pady=2)
+
+        # Names Source
+        ttk.Label(cf, text="Copy Names From (Existing Culture):").grid(row=4, column=0, sticky=tk.W, pady=(10, 2))
+        self.rc_c_namesrc = tk.StringVar()
+        ttk.Combobox(cf, textvariable=self.rc_c_namesrc, values=sorted(list(c_data.keys())), state="readonly").grid(row=4, column=1, sticky=tk.W, padx=5)
+
+        # Traditions & Ethnicities (Lists)
+        list_frame = ttk.Frame(cf)
+        list_frame.grid(row=5, column=0, columnspan=4, sticky=tk.NSEW, pady=10)
+
+        # Traditions
+        tf = ttk.LabelFrame(list_frame, text="Traditions", padding=5)
+        tf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        self.rc_c_trad_list = tk.Listbox(tf, height=6, bg="white", fg="black", selectmode=tk.MULTIPLE)
+        self.rc_c_trad_list.pack(fill=tk.BOTH, expand=True)
+        for t in sorted(list(self.trad_map.keys())): self.rc_c_trad_list.insert(tk.END, t)
+
+        # Ethnicities
+        ef = ttk.LabelFrame(list_frame, text="Ethnicities", padding=5)
+        ef.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        self.rc_c_eth_list = tk.Listbox(ef, height=6, bg="white", fg="black", selectmode=tk.MULTIPLE)
+        self.rc_c_eth_list.pack(fill=tk.BOTH, expand=True)
+        for e in c_eths: self.rc_c_eth_list.insert(tk.END, e)
+
+        ttk.Button(cf, text="Save New Culture", command=self.save_new_culture_ui).grid(row=6, column=3, sticky=tk.E, pady=10)
+
+        # --- Create Religion UI ---
+        rf = ttk.Frame(tab_rel, padding=10)
+        rf.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(rf, text="Internal Key (e.g. protestant):").grid(row=0, column=0, sticky=tk.W)
+        self.rc_r_key = tk.StringVar()
+        ttk.Entry(rf, textvariable=self.rc_r_key, width=20).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(rf, text="Localization Name:").grid(row=0, column=2, sticky=tk.W)
+        self.rc_r_name = tk.StringVar()
+        ttk.Entry(rf, textvariable=self.rc_r_name, width=20).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(rf, text="Color:").grid(row=1, column=0, sticky=tk.W)
+        self.rc_r_rgb = [255, 255, 255]
+        self.rc_r_color_prev = tk.Label(rf, text="     ", bg="#FFFFFF", relief="solid", borderwidth=1)
+        self.rc_r_color_prev.grid(row=1, column=1, sticky=tk.W, padx=5)
+        ttk.Button(rf, text="Pick", command=self.pick_rel_color).grid(row=1, column=2, sticky=tk.W)
+
+        ttk.Label(rf, text="Heritage:").grid(row=2, column=0, sticky=tk.W)
+        self.rc_r_her = tk.StringVar()
+        ttk.Combobox(rf, textvariable=self.rc_r_her, values=r_heritages, state="readonly").grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Label(rf, text="Icon Path:").grid(row=3, column=0, sticky=tk.W)
+        self.rc_r_icon = tk.StringVar(value="gfx/interface/icons/religion_icons/protestant.dds")
+        ttk.Entry(rf, textvariable=self.rc_r_icon, width=40).grid(row=3, column=1, columnspan=3, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Button(rf, text="Save New Religion", command=self.save_new_religion_ui).grid(row=4, column=3, sticky=tk.E, pady=10)
+
+        self.run_btn.config(text="Ready", state="disabled")
+
+    def pick_cult_color(self):
+        color = colorchooser.askcolor(title="Culture Color")
+        if color[0]:
+            self.rc_c_rgb = [int(x) for x in color[0]]
+            self.rc_c_color_prev.config(bg=color[1])
+
+    def pick_rel_color(self):
+        color = colorchooser.askcolor(title="Religion Color")
+        if color[0]:
+            self.rc_r_rgb = [int(x) for x in color[0]]
+            self.rc_r_color_prev.config(bg=color[1])
+
+    def save_new_culture_ui(self):
+        key = self.rc_c_key.get().strip()
+        name = self.rc_c_name.get().strip()
+        if not key or not name: return messagebox.showerror("Error", "Key and Name required.")
+
+        if not self.rc_c_rel.get(): return messagebox.showerror("Error", "Religion required.")
+        if not self.rc_c_her.get(): return messagebox.showerror("Error", "Heritage required.")
+        if not self.rc_c_lang.get(): return messagebox.showerror("Error", "Language required.")
+        if not self.rc_c_graph.get(): return messagebox.showerror("Error", "Graphics required.")
+
+        # Map values back from display names
+        display_her = self.rc_c_her.get()
+        raw_her = self.heritage_map.get(display_her, display_her)
+
+        display_lang = self.rc_c_lang.get()
+        raw_lang = self.lang_map.get(display_lang, display_lang)
+
+        # Get list selections and map back
+        trads = []
+        for i in self.rc_c_trad_list.curselection():
+            display_t = self.rc_c_trad_list.get(i)
+            trads.append(self.trad_map.get(display_t, display_t))
+
+        eths = [self.rc_c_eth_list.get(i) for i in self.rc_c_eth_list.curselection()]
+
+        # Names
+        name_src = self.rc_c_namesrc.get()
+        name_data = {}
+        if name_src and name_src in self.cult_scan_data:
+             name_data = self.cult_scan_data[name_src]
+
+        self.logic.save_new_culture(
+             key, name, self.rc_c_rgb,
+             self.rc_c_rel.get(), raw_her, raw_lang,
+             trads, self.rc_c_graph.get(), eths, name_data
+        )
+        messagebox.showinfo("Success", f"Culture {key} saved.")
+
+    def save_new_religion_ui(self):
+        key = self.rc_r_key.get().strip()
+        name = self.rc_r_name.get().strip()
+        if not key or not name: return messagebox.showerror("Error", "Key and Name required.")
+
+        if not self.rc_r_her.get(): return messagebox.showerror("Error", "Heritage required.")
+
+        self.logic.save_new_religion(
+             key, name, self.rc_r_rgb, self.rc_r_her.get(), self.rc_r_icon.get()
+        )
+        messagebox.showinfo("Success", f"Religion {key} saved.")
+
+    # --- MODE 9: STATE MANAGER ---
+    def show_state_manager_ui(self):
+        self.clear_content()
+        self.mode = "STATE_MANAGER"
+        f = ttk.LabelFrame(self.content_frame, text="State Manager", padding=15)
+        f.pack(fill=tk.BOTH, expand=True)
+
+        # 1. State Selector
+        sel_frame = ttk.Frame(f)
+        sel_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(sel_frame, text="State Name (e.g. texas):").pack(side=tk.LEFT)
+        self.sm_state_name = tk.StringVar()
+        e_st = ttk.Entry(sel_frame, textvariable=self.sm_state_name, width=20)
+        e_st.pack(side=tk.LEFT, padx=5)
+        e_st.bind("<Return>", lambda e: self.load_state_manager_data())
+        ttk.Button(sel_frame, text="Load State Data", command=self.load_state_manager_data).pack(side=tk.LEFT, padx=5)
+
+        # 2. Homelands
+        h_frame = ttk.LabelFrame(f, text="Homelands", padding=10)
+        h_frame.pack(fill=tk.X, pady=5)
+
+        self.lb_homelands = tk.Listbox(h_frame, height=4, bg="#424242", fg="#ECEFF1")
+        self.lb_homelands.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0,5))
+
+        h_ctrl = ttk.Frame(h_frame)
+        h_ctrl.pack(side=tk.LEFT, fill=tk.Y)
+
+        self.sm_homeland_add = tk.StringVar()
+        self.cb_homeland_add = ttk.Combobox(h_ctrl, textvariable=self.sm_homeland_add, width=20)
+        # Will populate on scan
+        self.cb_homeland_add.pack(pady=2)
+
+        ttk.Button(h_ctrl, text="Add", command=self.add_state_homeland).pack(fill=tk.X, pady=2)
+        ttk.Button(h_ctrl, text="Remove Selected", command=self.remove_state_homeland).pack(fill=tk.X, pady=2)
+        ttk.Button(h_ctrl, text="Save Homelands", command=self.save_state_homelands_ui).pack(fill=tk.X, pady=(10, 2))
+
+        # 3. Population
+        p_frame = ttk.LabelFrame(f, text="Population", padding=10)
+        p_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Total
+        tot_frame = ttk.Frame(p_frame)
+        tot_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(tot_frame, text="Total State Population:").pack(side=tk.LEFT)
+        self.sm_total_pop = tk.StringVar()
+        ttk.Entry(tot_frame, textvariable=self.sm_total_pop, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(tot_frame, text="Update Total (Distribute)", command=self.update_state_total_pop).pack(side=tk.LEFT, padx=5)
+
+        # Individual Edit
+        ind_frame = ttk.LabelFrame(p_frame, text="Edit Individual Pop Block", padding=5)
+        ind_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        ttk.Label(ind_frame, text="Select Pop Block:").grid(row=0, column=0, sticky=tk.W)
+        self.sm_pop_select = tk.StringVar()
+        self.cb_pop_select = ttk.Combobox(ind_frame, textvariable=self.sm_pop_select, state="readonly", width=60)
+        self.cb_pop_select.grid(row=0, column=1, columnspan=3, sticky=tk.W, padx=5, pady=2)
+        self.cb_pop_select.bind("<<ComboboxSelected>>", self.on_state_pop_select)
+
+        ttk.Label(ind_frame, text="Culture:").grid(row=1, column=0, sticky=tk.W)
+        self.sm_pop_cul = tk.StringVar()
+        self.cb_pop_cul = ttk.Combobox(ind_frame, textvariable=self.sm_pop_cul, width=20)
+        self.cb_pop_cul.grid(row=1, column=1, sticky=tk.W, padx=5)
+
+        ttk.Label(ind_frame, text="Religion:").grid(row=1, column=2, sticky=tk.W)
+        self.sm_pop_rel = tk.StringVar()
+        self.cb_pop_rel = ttk.Combobox(ind_frame, textvariable=self.sm_pop_rel, width=20)
+        self.cb_pop_rel.grid(row=1, column=3, sticky=tk.W, padx=5)
+
+        ttk.Label(ind_frame, text="Size:").grid(row=2, column=0, sticky=tk.W)
+        self.sm_pop_size = tk.StringVar()
+        ttk.Entry(ind_frame, textvariable=self.sm_pop_size, width=15).grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+
+        ttk.Button(ind_frame, text="Update This Pop", command=self.save_single_pop_ui).grid(row=2, column=3, sticky=tk.E, pady=2)
+
+        # Init options
+        c_opts, _, _, _, _, _ = self.logic.scan_culture_definitions()
+        all_culs = sorted(list(c_opts.keys()))
+        self.cb_homeland_add['values'] = all_culs
+        self.cb_pop_cul['values'] = all_culs
+
+        _, r_opts = self.logic.scan_all_religions_and_heritages()
+        # Need religions not heritages
+        r_all, _ = self.logic.scan_all_religions_and_heritages()
+        # scan_definitions_for_options also gives used religions
+        _, def_rels, _, _ = self.logic.scan_definitions_for_options()
+        self.cb_pop_rel['values'] = sorted(list(set(r_all + def_rels)))
+
+        self.current_state_homelands = []
+        self.current_state_pops = []
+
+        self.run_btn.config(text="Reload Data", command=self.load_state_manager_data)
+
+    def load_state_manager_data(self):
+        state = self.sm_state_name.get().strip()
+        if not state: return
+
+        # Homelands
+        _, homelands = self.logic.get_state_homelands(state)
+        self.current_state_homelands = homelands
+        self.refresh_homelands_list()
+
+        # Pops
+        pops = self.logic.get_state_pops(state)
+        self.current_state_pops = pops
+
+        total = sum(p['size'] for p in pops)
+        self.sm_total_pop.set(str(total))
+
+        # Populate selector
+        pop_list = []
+        for i, p in enumerate(pops):
+            # "size, religion, culture, region_state:TAG"
+            s = f"{p['size']}, {p['religion']}, {p['culture']}, region_state:{p['region_tag']}"
+            pop_list.append(s)
+        self.cb_pop_select['values'] = pop_list
+        if pop_list:
+            self.cb_pop_select.current(0)
+            self.on_state_pop_select()
+        else:
+            self.sm_pop_cul.set("")
+            self.sm_pop_rel.set("")
+            self.sm_pop_size.set("")
+
+        self.log_message(f"Loaded data for {state}", 'success')
+
+    def refresh_homelands_list(self):
+        self.lb_homelands.delete(0, tk.END)
+        for h in self.current_state_homelands:
+            # Display without prefix for readability, but keep internal list intact
+            display_val = h.replace("cu:", "").replace("c:", "")
+            self.lb_homelands.insert(tk.END, display_val)
+
+    def add_state_homeland(self):
+        val = self.sm_homeland_add.get().strip()
+        if val:
+            # Check if it needs prefix (it's a culture)
+            # We assume the dropdown values are cultures
+            prefixed_val = f"cu:{val}" if not val.startswith("cu:") and not val.startswith("c:") else val
+
+            if prefixed_val not in self.current_state_homelands:
+                self.current_state_homelands.append(prefixed_val)
+                self.refresh_homelands_list()
+
+    def remove_state_homeland(self):
+        sel = self.lb_homelands.curselection()
+        if sel:
+            display_val = self.lb_homelands.get(sel[0])
+            # We need to find the matching entry in the internal list
+            # Try reconstructing likely prefixes or search
+            to_remove = None
+            if display_val in self.current_state_homelands:
+                to_remove = display_val
+            elif f"cu:{display_val}" in self.current_state_homelands:
+                to_remove = f"cu:{display_val}"
+            elif f"c:{display_val}" in self.current_state_homelands:
+                to_remove = f"c:{display_val}"
+
+            if to_remove:
+                self.current_state_homelands.remove(to_remove)
+                self.refresh_homelands_list()
+
+    def save_state_homelands_ui(self):
+        state = self.sm_state_name.get().strip()
+        if not state: return
+        self.logic.save_state_homelands(state, self.current_state_homelands)
+        messagebox.showinfo("Success", "Homelands saved.")
+
+    def on_state_pop_select(self, event=None):
+        idx = self.cb_pop_select.current()
+        if idx >= 0 and idx < len(self.current_state_pops):
+            p = self.current_state_pops[idx]
+            self.sm_pop_cul.set(p['culture'])
+            self.sm_pop_rel.set(p['religion'])
+            self.sm_pop_size.set(p['size'])
+
+    def update_state_total_pop(self):
+        state = self.sm_state_name.get().strip()
+        if not state or not self.current_state_pops: return
+
+        try:
+            new_total = int(self.sm_total_pop.get())
+        except: return messagebox.showerror("Error", "Invalid number")
+
+        self.logic.save_state_pops_total(state, new_total, self.current_state_pops)
+        messagebox.showinfo("Success", "Total population updated.")
+        self.load_state_manager_data() # Refresh to verify
+
+    def save_single_pop_ui(self):
+        idx = self.cb_pop_select.current()
+        if idx < 0 or idx >= len(self.current_state_pops): return
+
+        p = self.current_state_pops[idx]
+
+        new_c = self.sm_pop_cul.get().strip()
+        new_r = self.sm_pop_rel.get().strip()
+        try:
+            new_s = int(self.sm_pop_size.get())
+        except: return messagebox.showerror("Error", "Invalid size")
+
+        if not new_c or not new_r: return
+
+        self.logic.save_single_pop(p, new_c, new_r, new_s)
+        messagebox.showinfo("Success", "Pop block updated.")
+        self.load_state_manager_data() # Refresh
 
 if __name__ == "__main__":
     app = App()
