@@ -1106,7 +1106,7 @@ class Vic3Logic:
                             m = re.search(r"create_character\s*=\s*\{", block[char_idx:], re.IGNORECASE)
                             if not m: break
                             abs_start = char_idx + m.start()
-                            bs, be = self.find_block_content(block, abs_start + m.end() - 1)
+                            bs, be = self.find_block_content(block, char_idx + m.end() - 1)
                             if bs:
                                 char_block = block[bs:be]
                                 if re.search(r"ruler\s*=\s*yes", char_block, re.IGNORECASE):
@@ -1146,7 +1146,7 @@ class Vic3Logic:
                             m = re.search(r"create_character\s*=\s*\{", block[c_cursor:], re.IGNORECASE)
                             if not m: break
                             start = c_cursor + m.start()
-                            bs, be = self.find_block_content(block, start + m.end() - 1)
+                            bs, be = self.find_block_content(block, c_cursor + m.end() - 1)
                             if bs:
                                 inner = block[bs:be]
                                 tmpl_match = re.search(r"template\s*=\s*([A-Za-z0-9_.-]+)", inner, re.IGNORECASE)
@@ -1189,7 +1189,7 @@ class Vic3Logic:
                                 m = re.search(r"([A-Za-z0-9_.-]+)\s*=\s*\{", content[cursor:])
                                 if not m: break
                                 start = cursor + m.start()
-                                bs, be = self.find_block_content(content, start + m.end() - 1)
+                                bs, be = self.find_block_content(content, cursor + m.end() - 1)
                                 if bs:
                                     block_inner = content[bs:be]
                                     if re.search(r"ruler\s*=\s*yes", block_inner, re.IGNORECASE):
@@ -1277,7 +1277,7 @@ class Vic3Logic:
             m = re.search(r"create_character\s*=\s*\{", new_block[char_idx:])
             if not m: break
             abs_start = char_idx + m.start()
-            bs, be = self.find_block_content(new_block, abs_start + m.end() - 1)
+            bs, be = self.find_block_content(new_block, char_idx + m.end() - 1)
             if bs:
                 sub = new_block[bs:be]
                 if "ruler = yes" in sub: ruler_start = abs_start; ruler_end = be; break
@@ -1344,7 +1344,7 @@ class Vic3Logic:
 
                     overlord_tag = match.group(1)
                     abs_start = idx + match.start()
-                    s, e = self.find_block_content(content, abs_start + match.end() - 1)
+                    s, e = self.find_block_content(content, idx + match.end() - 1)
 
                     if s:
                         block_body = content[s:e]
@@ -1364,7 +1364,7 @@ class Vic3Logic:
                             pact_start = cursor + m.start()
                             new_body_parts.append(block_body[cursor:pact_start])
 
-                            bs, be = self.find_block_content(block_body, pact_start + m.end() - 1)
+                            bs, be = self.find_block_content(block_body, cursor + m.end() - 1)
                             if bs:
                                 pact_inner = block_body[bs:be]
                                 is_target = re.search(r"country\s*=\s*c:" + re.escape(clean_target) + r"\b", pact_inner)
@@ -1571,7 +1571,7 @@ class Vic3Logic:
                 abs_start = cursor + m.start()
                 new_inner_parts.append(inner_body[cursor:abs_start])
 
-                bs, be = self.find_block_content(inner_body, abs_start + m.end() - 1)
+                bs, be = self.find_block_content(inner_body, cursor + m.end() - 1)
                 if bs:
                     pact_block = inner_body[bs:be]
 
