@@ -1901,6 +1901,33 @@ class Vic3Logic:
         "principle_market_unification"
     ]
 
+    PB_PRIMARY_PRINCIPLE_OPTIONS = {
+        "identity_trade_league": [
+            "principle_external_trade",
+            "principle_internal_trade"
+        ],
+        "identity_sovereign_empire": [
+            "principle_vassalization",
+            "principle_exploitation"
+        ],
+        "identity_ideological_union": [
+            "principle_creative_legislature",
+            "principle_ideological_truth"
+        ],
+        "identity_religious_convocation": [
+            "principle_divine_economics",
+            "principle_sacred_civics"
+        ],
+        "identity_military_treaty": [
+            "principle_defensive_cooperation",
+            "principle_aggressive_coordination"
+        ],
+        "identity_cultural_commonwealth": [
+            "principle_shared_canon",
+            "principle_freedom_of_movement"
+        ]
+    }
+
     def get_power_bloc_data(self, tag):
         """Parses power bloc data for a specific tag from history/global."""
         clean_tag = tag.replace("c:", "").strip()
@@ -2026,9 +2053,13 @@ class Vic3Logic:
 
         # Reconstruct members
         members_list = data.get("members", [])
-        # User requested NOT to auto-add leader as member
+        # User requested NOT to auto-add leader as member, so we filter it out if present
+        filtered_members = [
+            m for m in members_list
+            if m.replace("c:", "").strip() != clean_tag
+        ]
 
-        members_str = "\n\t\t\t".join([f"member = {m}" for m in members_list])
+        members_str = "\n\t\t\t".join([f"member = {m}" for m in filtered_members])
 
         create_block = f"""
 \t\tcreate_power_bloc = {{
@@ -3072,16 +3103,41 @@ class App(tk.Tk):
         self.cb_pb_select['values'] = values
 
     def load_pb_definitions(self):
-        self.cb_pb_identity['values'] = self.logic.PB_IDENTITIES
+        # Format identities for display
+        self.identity_key_map = {}
+        self.identity_display_map = {}
+        display_values = []
+
+        for key in self.logic.PB_IDENTITIES:
+            # identity_trade_league -> Trade League
+            clean = key.replace("identity_", "").replace("_", " ").title()
+            self.identity_key_map[clean] = key
+            self.identity_display_map[key] = clean
+            display_values.append(clean)
+
+        self.cb_pb_identity['values'] = display_values
 
     def refresh_principle_options(self, event=None):
-        current_id = self.pb_identity.get()
+        current_display = self.pb_identity.get()
+        # Map back to raw key
+        current_id = getattr(self, 'identity_key_map', {}).get(current_display, current_display)
+
         options = list(self.logic.PB_GLOBAL_PRINCIPLES)
 
         if current_id in self.logic.PB_EXCLUSIVE_PRINCIPLES:
             options.extend(self.logic.PB_EXCLUSIVE_PRINCIPLES[current_id])
 
-        self.cb_pb_princ_add['values'] = sorted(options)
+        options = sorted(options)
+
+        # Create map and display list
+        self.principle_key_map = {}
+        display_values = []
+        for key in options:
+            clean = key.replace("principle_", "").replace("_", " ").title()
+            self.principle_key_map[clean] = key
+            display_values.append(clean)
+
+        self.cb_pb_princ_add['values'] = display_values
 
         # Validate and remove incompatible principles
         exclusive_map = self.logic.PB_EXCLUSIVE_PRINCIPLES
@@ -3132,7 +3188,9 @@ class App(tk.Tk):
 
         if data:
             self.pb_name.set(data['name'])
-            self.pb_identity.set(data['identity'])
+            # Map raw key to display name
+            raw_ident = data['identity']
+            self.pb_identity.set(getattr(self, 'identity_display_map', {}).get(raw_ident, raw_ident))
             self.pb_color.set(data['map_color'])
 
             # Parse color for preview
@@ -3211,14 +3269,18 @@ class App(tk.Tk):
             self.pb_color_preview.config(bg=color[1])
 
     def add_pb_principle(self):
-        key = self.pb_princ_add_var.get()
+        display = self.pb_princ_add_var.get()
+        # Look up key from display map, or use as is if not found (fallback)
+        key = getattr(self, 'principle_key_map', {}).get(display, display)
+
         try:
             level = int(self.pb_princ_level.get())
         except: level = 1
 
         if not key: return
 
-        current_id = self.pb_identity.get()
+        current_display = self.pb_identity.get()
+        current_id = getattr(self, 'identity_key_map', {}).get(current_display, current_display)
 
         # VALIDATION RULES
 
@@ -3264,7 +3326,8 @@ class App(tk.Tk):
         if not new_tag: return messagebox.showerror("Error", "Leader Tag required.")
 
         name = self.pb_name.get().strip()
-        identity = self.pb_identity.get().strip()
+        display_identity = self.pb_identity.get().strip()
+        identity = getattr(self, 'identity_key_map', {}).get(display_identity, display_identity)
         color = self.pb_color.get().strip()
         date = self.pb_date.get().strip()
 
@@ -3274,6 +3337,21 @@ class App(tk.Tk):
             principles.append({"key": vals[0], "level": int(vals[1])})
 
         if not name or not identity: return messagebox.showerror("Error", "Name and Identity required.")
+
+        # Check Primary Principle Requirement
+        req_principles = self.logic.PB_PRIMARY_PRINCIPLE_OPTIONS.get(identity, [])
+        has_req = False
+        for p in principles:
+            if p["key"] in req_principles:
+                has_req = True
+                break
+
+        if req_principles and not has_req:
+             # Create nice string for warning
+             req_names = [p.replace("principle_", "").replace("_", " ").title() for p in req_principles]
+             msg = f"The identity '{identity}' requires at least one of these principles:\n" + "\n".join(req_names)
+             messagebox.showwarning("Validation Error", msg)
+             return
 
         if not hasattr(self, 'pb_current_members'):
              self.pb_current_members = []
