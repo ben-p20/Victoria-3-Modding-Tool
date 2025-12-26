@@ -2024,6 +2024,36 @@ class Vic3Logic:
                             return data
         return None
 
+    def save_power_bloc_localization(self, key, value):
+        self.perform_auto_backup()
+        loc_dir = os.path.join(self.mod_path, "localization", "english")
+        os.makedirs(loc_dir, exist_ok=True)
+        target_file = os.path.join(loc_dir, "mod_power_blocs_l_english.yml")
+
+        if not os.path.exists(target_file):
+            with open(target_file, 'w', encoding='utf-8-sig') as f: f.write("l_english:\n")
+
+        try:
+            with open(target_file, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+            with open(target_file, 'r', encoding='utf-8') as f: content = f.read()
+
+        # Escape quotes in value
+        safe_value = value.replace('"', '\\"')
+
+        # Check if key exists
+        pattern = re.compile(r'^\s*' + re.escape(key) + r':\d?\s*".*"', re.MULTILINE)
+        new_line = f' {key}: "{safe_value}"'
+
+        if pattern.search(content):
+            content = pattern.sub(new_line, content)
+        else:
+            if not content.endswith("\n"): content += "\n"
+            content += new_line + "\n"
+
+        with open(target_file, 'w', encoding='utf-8-sig') as f: f.write(content)
+        self.log(f"[SAVE] Power Bloc localization saved to {target_file}", 'success')
+
     def save_power_bloc_data(self, tag, data):
         """Saves power bloc data to history/global."""
         self.perform_auto_backup()
@@ -2041,6 +2071,16 @@ class Vic3Logic:
             with open(target_file, 'r', encoding='utf-8') as f: content = f.read()
 
         clean_tag = tag.replace("c:", "").strip()
+
+        # Sanitize name for key
+        raw_name = data['name']
+        # Remove special chars, allow alphanumeric and spaces/underscores
+        name_key = re.sub(r'[^a-z0-9_ ]', '', raw_name.lower()).strip().replace(" ", "_")
+        # Collapse multiple underscores
+        name_key = re.sub(r'_+', '_', name_key)
+
+        # Update localization
+        self.save_power_bloc_localization(name_key, raw_name)
 
         # Prepare content strings
         # FIX: Ensure the identity's core required principle is first
@@ -2080,7 +2120,7 @@ class Vic3Logic:
 
         create_block = f"""
 \t\tcreate_power_bloc = {{
-\t\t\tname = {data['name']}
+\t\t\tname = {name_key}
 \t\t\tmap_color = {map_col_str}
 \t\t\tfounding_date = {data['date']}
 \t\t\tidentity = {data['identity']}
