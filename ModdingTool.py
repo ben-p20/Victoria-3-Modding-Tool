@@ -43,7 +43,7 @@ class Vic3Logic:
         """Checks if a country tag already exists in common/country_definitions."""
         def_path = os.path.join(self.mod_path, "common/country_definitions")
         if not os.path.exists(def_path): return False
-        
+
         for root, _, files in os.walk(def_path):
             for file in files:
                 if not file.endswith(".txt"): continue
@@ -51,7 +51,7 @@ class Vic3Logic:
                     with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
                 except:
                     with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
-                
+
                 if re.search(r"^\s*" + re.escape(tag) + r"\s*=", content, re.MULTILINE):
                     return True
         return False
@@ -104,12 +104,12 @@ class Vic3Logic:
     def get_country_data(self, tag):
         """Attempts to find culture, religion, and capital of a tag."""
         data = { "cultures": None, "religion": None, "capital": None }
-        
+
         def_path = os.path.join(self.mod_path, "common/country_definitions")
         if not os.path.exists(def_path): return data
 
         clean_tag = tag.replace("c:", "").strip()
-        
+
         for root, _, files in os.walk(def_path):
             for file in files:
                 if not file.endswith(".txt"): continue
@@ -122,13 +122,13 @@ class Vic3Logic:
                 if match:
                     start_brace = match.end() - 1
                     _, end_brace = self.find_block_content(content, start_brace)
-                    
+
                     if end_brace:
                         block_content = content[start_brace:end_brace]
-                        
+
                         cul_match = re.search(r"cultures\s*=\s*\{([^}]+)\}", block_content)
                         if cul_match: data["cultures"] = cul_match.group(1).strip()
-                        
+
                         rel_match = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", block_content)
                         if rel_match: data["religion"] = rel_match.group(1).strip()
 
@@ -159,7 +159,7 @@ class Vic3Logic:
                     # Found start of culture block. Find the block content.
                     start_brace = match.end() - 1
                     _, end_brace = self.find_block_content(content, start_brace)
-                    
+
                     if end_brace:
                         block = content[start_brace:end_brace]
                         rel_match = re.search(r"religion\s*=\s*([A-Za-z0-9_]+)", block)
@@ -461,7 +461,7 @@ class Vic3Logic:
                 self.log(f"   [LOC] Using Capital: {final_state}")
             else:
                 return None, None
-        
+
         hq_region = self.find_strategic_region(f"s:{final_state}")
         if not hq_region:
             hq_region = "sr:region_europe"
@@ -469,7 +469,7 @@ class Vic3Logic:
         else:
             if not hq_region.startswith("sr:"):
                 hq_region = f"sr:{hq_region}"
-                
+
         return final_state, hq_region
 
     def create_army_file(self, tag, army_name, target_state, inf, art, cav):
@@ -528,7 +528,7 @@ class Vic3Logic:
         self.perform_auto_backup()
         self.log(f"[GEN] Creating Navy '{navy_name}' for {tag}...")
         self.log(f"   [WARN] Ensure {target_state if target_state else 'Capital'} is a COASTAL state!", 'warn')
-        
+
         final_state, hq_region = self._get_location_data(tag, target_state)
         if not final_state: return self.log("[ERROR] Aborting: Location unknown.", 'error')
 
@@ -581,7 +581,7 @@ class Vic3Logic:
         path = os.path.join(self.mod_path, "common/strategic_regions")
         if not os.path.exists(path): return None
         clean_key = state_key.replace("s:", "").upper()
-        
+
         for root, _, files in os.walk(path):
             if self.stop_event.is_set(): return None
             for file in files:
@@ -594,7 +594,7 @@ class Vic3Logic:
                         if clean_key in block.upper():
                             raw_name = block.split("=")[0].strip()
                             return f"region_{raw_name}"
-                except: 
+                except:
                     continue
         return None
 
@@ -605,13 +605,13 @@ class Vic3Logic:
             if text[i] == '{': break
             i += 1
         if i >= n: return None, None
-        
+
         start_brace = i
         i += 1
         depth = 1
         in_string = False
         in_comment = False
-        
+
         while i < n and depth > 0:
             char = text[i]
             if in_comment:
@@ -624,7 +624,7 @@ class Vic3Logic:
                 elif char == '{': depth += 1
                 elif char == '}': depth -= 1
             i += 1
-            
+
         if depth == 0: return start_brace, i
         return None, None
 
@@ -632,7 +632,7 @@ class Vic3Logic:
         pattern = re.compile(re.escape(start_pattern) + r"\s*(=|[\?]=)\s*\{", re.IGNORECASE)
         match = pattern.search(content, start_search_idx)
         if not match: return None, None
-        
+
         start_brace, end_brace = self.find_block_content(content, match.end() - 1)
         if start_brace is not None:
             return match.start(), end_brace
@@ -850,7 +850,7 @@ class Vic3Logic:
                 cursor = f_end
             processed_file_parts.append(header + "".join(new_inner_parts) + footer)
             last_idx = c_end
-            current_search_idx = c_end 
+            current_search_idx = c_end
         if not files_modified: return False
         new_file_content = "".join(processed_file_parts)
 
@@ -3029,7 +3029,7 @@ class App(tk.Tk):
         self.action_frame.pack(fill=tk.X)
         self.run_btn = ttk.Button(self.action_frame, text="Execute", command=lambda: None)
         self.run_btn.pack(side=tk.RIGHT, padx=5)
-        
+
         log_frame = ttk.LabelFrame(main_frame, text="Execution Log", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
         self.log_area = scrolledtext.ScrolledText(log_frame, state='disabled', height=10, bg="#1e1e1e", fg="#d4d4d4", insertbackground="white", relief="flat")
@@ -3193,12 +3193,12 @@ class App(tk.Tk):
         e_old = ttk.Entry(f, textvariable=self.cr_old_owner, width=10)
         e_old.grid(row=1, column=3, sticky=tk.W, pady=5)
         e_old.bind("<FocusOut>", self.on_old_owner_change)
-        
+
         # Row 2
         ttk.Label(f, text="Capital State (e.g. aquitaine):").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.cr_capital = tk.StringVar()
         ttk.Entry(f, textvariable=self.cr_capital, width=25).grid(row=2, column=1, sticky=tk.W, pady=5)
-        
+
         self.cr_annex = tk.BooleanVar()
         ttk.Checkbutton(f, text="Full Annexation", variable=self.cr_annex, command=self.toggle_annex_ui).grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=10)
 
@@ -3278,7 +3278,7 @@ class App(tk.Tk):
         # User requested to NOT populate the UI boxes automatically to keep them blank.
         # The background logic in start_create will handle defaults if these remain empty.
         pass
-    
+
     def filter_culture_options(self, event):
         typed = self.cr_cult_search.get().strip().lower()
         if not typed:
@@ -3357,7 +3357,7 @@ class App(tk.Tk):
             widget.destroy()
 
         m_type = self.mil_type.get()
-        
+
         if m_type == "army":
             self.mil_name.set("First Army" if "Fleet" in self.mil_name.get() else self.mil_name.get())
             self.mil_loc_lbl.config(text="(Defaults to Capital if empty/invalid)", foreground="#ECEFF1")
@@ -4276,7 +4276,7 @@ class App(tk.Tk):
                     prim_culture = cultures[0]
                     self.log_message(f"[INFO] Religion missing. searching in culture '{prim_culture}'...", 'info')
                     found_rel = self.logic.get_religion_by_culture(prim_culture)
-                
+
                 if found_rel:
                     religion = found_rel
                     self.log_message(f"[INFO] Found religion '{religion}' from culture '{prim_culture}'.", 'success')
@@ -4323,7 +4323,7 @@ class App(tk.Tk):
 
             # (Old owner data logic is now partly in UI for prepopulation, but we still need capital logic if annexing)
             data = self.logic.get_country_data(old_owner)
-            
+
             all_states = []
             if is_annex:
                 self.log_message(f"[INFO] Full Annexation selected. Detecting all states for {old_owner}...", 'info')
@@ -4332,7 +4332,7 @@ class App(tk.Tk):
                     self.log_message(f"[WARN] No states found for {old_owner} to annex.", 'warn')
                     return
                 all_states = found_states
-                
+
                 # If capital input is blank, use old owner's capital
                 if not capital:
                     if data["capital"]:
@@ -4349,7 +4349,7 @@ class App(tk.Tk):
                 all_states = [capital] + others
 
             self.logic.create_country_files(tag, name, adj, capital, gov, rgb, cultures, religion, tier, country_type, old_owner)
-            
+
             self.log_message("--- Transferring Land & Units ---", 'info')
             self.execute_transfer_core(all_states, old_owner, tag)
         except Exception as e:
