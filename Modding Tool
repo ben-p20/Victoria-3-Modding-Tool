@@ -1926,7 +1926,7 @@ class App(tk.Tk):
         ttk.Button(header_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
 
         # Main Content Box (Untitled LabelFrame)
-        path_frame = ttk.LabelFrame(main_frame, text="", padding=15)
+        path_frame = ttk.LabelFrame(main_frame, padding=15)
         path_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.path_var = tk.StringVar()
@@ -1942,8 +1942,7 @@ class App(tk.Tk):
         # Mod Manager button moved to header
         ttk.Button(nav_frame, text="Transfer States", command=self.show_transfer_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Country", command=self.show_create_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(nav_frame, text="Create Army", command=self.show_army_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(nav_frame, text="Create Navy", command=self.show_navy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(nav_frame, text="Military Creator", command=self.show_military_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Modify Country", command=self.show_country_mod_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Diplomacy", command=self.show_diplomacy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
@@ -2237,73 +2236,114 @@ class App(tk.Tk):
             self.selected_cultures.remove(val)
             self.lb_cultures.delete(idx)
 
-    # --- MODE 3: CREATE ARMY ---
-    def show_army_ui(self):
+    # --- MODE 3: MILITARY CREATOR ---
+    def show_military_ui(self):
         self.clear_content()
-        self.mode = "ARMY"
-        f = ttk.LabelFrame(self.content_frame, text="Create Army Template", padding=15)
-        f.pack(fill=tk.X)
-        ttk.Label(f, text="Country Tag:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.arm_tag = tk.StringVar()
-        ttk.Entry(f, textvariable=self.arm_tag, width=10).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
-        ttk.Label(f, text="Army Name:").grid(row=0, column=2, sticky=tk.W, pady=5)
-        self.arm_name = tk.StringVar(value="First Army")
-        ttk.Entry(f, textvariable=self.arm_name, width=20).grid(row=0, column=3, sticky=tk.W, pady=5, padx=5)
-        ttk.Label(f, text="Target State (Opt):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.arm_state = tk.StringVar()
-        ttk.Entry(f, textvariable=self.arm_state, width=20).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
-        ttk.Label(f, text="(Defaults to Capital if empty/invalid)").grid(row=1, column=2, columnspan=2, sticky=tk.W)
-        u_frame = ttk.LabelFrame(f, text="Composition", padding=10)
-        u_frame.grid(row=2, column=0, columnspan=4, sticky=tk.W+tk.E, pady=10)
-        ttk.Label(u_frame, text="Infantry:").grid(row=0, column=0, padx=5)
-        self.arm_inf = tk.IntVar(value=10)
-        ttk.Entry(u_frame, textvariable=self.arm_inf, width=5).grid(row=0, column=1, padx=5)
-        ttk.Label(u_frame, text="Artillery:").grid(row=0, column=2, padx=5)
-        self.arm_art = tk.IntVar(value=0)
-        ttk.Entry(u_frame, textvariable=self.arm_art, width=5).grid(row=0, column=3, padx=5)
-        ttk.Label(u_frame, text="Cavalry:").grid(row=0, column=4, padx=5)
-        self.arm_cav = tk.IntVar(value=0)
-        ttk.Entry(u_frame, textvariable=self.arm_cav, width=5).grid(row=0, column=5, padx=5)
-        self.run_btn.config(text="Create Army", command=self.start_create_army)
+        self.mode = "MILITARY"
 
-    # --- MODE 4: CREATE NAVY ---
-    def show_navy_ui(self):
-        self.clear_content()
-        self.mode = "NAVY"
-        f = ttk.LabelFrame(self.content_frame, text="Create Navy Template", padding=15)
+        f = ttk.LabelFrame(self.content_frame, text="Create Military Formation", padding=15)
         f.pack(fill=tk.X)
 
+        # Basic Info
         ttk.Label(f, text="Country Tag:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.nav_tag = tk.StringVar()
-        ttk.Entry(f, textvariable=self.nav_tag, width=10).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
+        self.mil_tag = tk.StringVar()
+        ttk.Entry(f, textvariable=self.mil_tag, width=10).grid(row=0, column=1, sticky=tk.W, pady=5, padx=5)
 
-        ttk.Label(f, text="Navy Name:").grid(row=0, column=2, sticky=tk.W, pady=5)
-        self.nav_name = tk.StringVar(value="First Fleet")
-        ttk.Entry(f, textvariable=self.nav_name, width=20).grid(row=0, column=3, sticky=tk.W, pady=5, padx=5)
+        ttk.Label(f, text="Formation Name:").grid(row=0, column=2, sticky=tk.W, pady=5)
+        self.mil_name = tk.StringVar(value="First Army")
+        ttk.Entry(f, textvariable=self.mil_name, width=20).grid(row=0, column=3, sticky=tk.W, pady=5, padx=5)
 
-        ttk.Label(f, text="Target State (Must be Coastal!):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.nav_state = tk.StringVar()
-        ttk.Entry(f, textvariable=self.nav_state, width=20).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
+        ttk.Label(f, text="Target State:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.mil_state = tk.StringVar()
+        ttk.Entry(f, textvariable=self.mil_state, width=20).grid(row=1, column=1, sticky=tk.W, pady=5, padx=5)
+
+        self.mil_loc_lbl = ttk.Label(f, text="(Defaults to Capital if empty/invalid)")
+        self.mil_loc_lbl.grid(row=1, column=2, columnspan=2, sticky=tk.W)
+
+        # Type Selection
+        ttk.Label(f, text="Formation Type:").grid(row=2, column=0, sticky=tk.W, pady=10)
+        self.mil_type = tk.StringVar(value="army")
+        tf = ttk.Frame(f)
+        tf.grid(row=2, column=1, columnspan=3, sticky=tk.W, pady=10)
+        ttk.Radiobutton(tf, text="Army", variable=self.mil_type, value="army", command=self.update_mil_inputs).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(tf, text="Navy", variable=self.mil_type, value="navy", command=self.update_mil_inputs).pack(side=tk.LEFT)
+
+        # Units Frame
+        self.mil_unit_frame = ttk.LabelFrame(f, text="Composition", padding=10)
+        self.mil_unit_frame.grid(row=3, column=0, columnspan=4, sticky=tk.W+tk.E, pady=10)
+
+        # Initialize inputs
+        self.update_mil_inputs()
+
+        self.run_btn.config(text="Create Formation", command=self.start_create_military)
+
+    def update_mil_inputs(self):
+        # Clear existing widgets in unit frame
+        for widget in self.mil_unit_frame.winfo_children():
+            widget.destroy()
+
+        m_type = self.mil_type.get()
         
-        warn_lbl = ttk.Label(f, text="(Warning: Game will crash if state is landlocked)", foreground="#EF5350")
-        warn_lbl.grid(row=1, column=2, columnspan=2, sticky=tk.W)
+        if m_type == "army":
+            self.mil_name.set("First Army" if "Fleet" in self.mil_name.get() else self.mil_name.get())
+            self.mil_loc_lbl.config(text="(Defaults to Capital if empty/invalid)", foreground="#ECEFF1")
 
-        u_frame = ttk.LabelFrame(f, text="Composition", padding=10)
-        u_frame.grid(row=2, column=0, columnspan=4, sticky=tk.W+tk.E, pady=10)
+            ttk.Label(self.mil_unit_frame, text="Infantry:").grid(row=0, column=0, padx=5)
+            self.mil_u1 = tk.IntVar(value=10)
+            ttk.Entry(self.mil_unit_frame, textvariable=self.mil_u1, width=5).grid(row=0, column=1, padx=5)
 
-        ttk.Label(u_frame, text="Man-of-War:").grid(row=0, column=0, padx=5)
-        self.nav_man = tk.IntVar(value=5)
-        ttk.Entry(u_frame, textvariable=self.nav_man, width=5).grid(row=0, column=1, padx=5)
+            ttk.Label(self.mil_unit_frame, text="Artillery:").grid(row=0, column=2, padx=5)
+            self.mil_u2 = tk.IntVar(value=0)
+            ttk.Entry(self.mil_unit_frame, textvariable=self.mil_u2, width=5).grid(row=0, column=3, padx=5)
 
-        ttk.Label(u_frame, text="Frigate:").grid(row=0, column=2, padx=5)
-        self.nav_frig = tk.IntVar(value=10)
-        ttk.Entry(u_frame, textvariable=self.nav_frig, width=5).grid(row=0, column=3, padx=5)
+            ttk.Label(self.mil_unit_frame, text="Cavalry:").grid(row=0, column=4, padx=5)
+            self.mil_u3 = tk.IntVar(value=0)
+            ttk.Entry(self.mil_unit_frame, textvariable=self.mil_u3, width=5).grid(row=0, column=5, padx=5)
 
-        ttk.Label(u_frame, text="Ironclad:").grid(row=0, column=4, padx=5)
-        self.nav_iron = tk.IntVar(value=0)
-        ttk.Entry(u_frame, textvariable=self.nav_iron, width=5).grid(row=0, column=5, padx=5)
+        else:
+            self.mil_name.set("First Fleet" if "Army" in self.mil_name.get() else self.mil_name.get())
+            self.mil_loc_lbl.config(text="(Warning: Must be Coastal or Game Crash!)", foreground="#EF5350")
 
-        self.run_btn.config(text="Create Navy", command=self.start_create_navy)
+            ttk.Label(self.mil_unit_frame, text="Man-of-War:").grid(row=0, column=0, padx=5)
+            self.mil_u1 = tk.IntVar(value=5)
+            ttk.Entry(self.mil_unit_frame, textvariable=self.mil_u1, width=5).grid(row=0, column=1, padx=5)
+
+            ttk.Label(self.mil_unit_frame, text="Frigate:").grid(row=0, column=2, padx=5)
+            self.mil_u2 = tk.IntVar(value=10)
+            ttk.Entry(self.mil_unit_frame, textvariable=self.mil_u2, width=5).grid(row=0, column=3, padx=5)
+
+            ttk.Label(self.mil_unit_frame, text="Ironclad:").grid(row=0, column=4, padx=5)
+            self.mil_u3 = tk.IntVar(value=0)
+            ttk.Entry(self.mil_unit_frame, textvariable=self.mil_u3, width=5).grid(row=0, column=5, padx=5)
+
+    def start_create_military(self):
+        if self.is_processing: return
+        mod_path = self.path_var.get()
+        if not mod_path: return messagebox.showerror("Error", "Select mod path first.")
+
+        tag = self.logic.format_tag_clean(self.mil_tag.get())
+        name = self.mil_name.get().strip()
+        state = self.logic.format_state_clean(self.mil_state.get())
+        m_type = self.mil_type.get()
+
+        if not tag: return messagebox.showerror("Error", "Tag is required.")
+        if not name: name = "Army" if m_type == "army" else "Fleet"
+
+        try:
+            u1 = int(self.mil_u1.get())
+            u2 = int(self.mil_u2.get())
+            u3 = int(self.mil_u3.get())
+        except:
+             return messagebox.showerror("Error", "Unit counts must be integers.")
+
+        self.is_processing = True
+        self.run_btn.config(state='disabled')
+        self.log_area.config(state='normal'); self.log_area.delete('1.0', tk.END); self.log_area.config(state='disabled')
+
+        if m_type == "army":
+             threading.Thread(target=self.run_army_logic, args=(tag, name, state, u1, u2, u3), daemon=True).start()
+        else:
+             threading.Thread(target=self.run_navy_logic, args=(tag, name, state, u1, u2, u3), daemon=True).start()
 
     def _rgb_to_hex(self, rgb):
         return f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
@@ -2717,42 +2757,6 @@ class App(tk.Tk):
         self.run_btn.config(state='disabled')
         self.log_area.config(state='normal'); self.log_area.delete('1.0', tk.END); self.log_area.config(state='disabled')
         threading.Thread(target=self.run_create_logic, args=(tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type), daemon=True).start()
-
-    def start_create_army(self):
-        if self.is_processing: return
-        mod_path = self.path_var.get()
-        if not mod_path: return messagebox.showerror("Error", "Select mod path first.")
-        tag = self.logic.format_tag_clean(self.arm_tag.get())
-        name = self.arm_name.get().strip() or "Army"
-        state = self.logic.format_state_clean(self.arm_state.get())
-        try:
-            inf = int(self.arm_inf.get())
-            art = int(self.arm_art.get())
-            cav = int(self.arm_cav.get())
-        except: return messagebox.showerror("Error", "Unit counts must be integers.")
-        if not tag: return messagebox.showerror("Error", "Tag is required.")
-        self.is_processing = True
-        self.run_btn.config(state='disabled')
-        self.log_area.config(state='normal'); self.log_area.delete('1.0', tk.END); self.log_area.config(state='disabled')
-        threading.Thread(target=self.run_army_logic, args=(tag, name, state, inf, art, cav), daemon=True).start()
-
-    def start_create_navy(self):
-        if self.is_processing: return
-        mod_path = self.path_var.get()
-        if not mod_path: return messagebox.showerror("Error", "Select mod path first.")
-        tag = self.logic.format_tag_clean(self.nav_tag.get())
-        name = self.nav_name.get().strip() or "Fleet"
-        state = self.logic.format_state_clean(self.nav_state.get())
-        try:
-            man = int(self.nav_man.get())
-            frig = int(self.nav_frig.get())
-            iron = int(self.nav_iron.get())
-        except: return messagebox.showerror("Error", "Unit counts must be integers.")
-        if not tag: return messagebox.showerror("Error", "Tag is required.")
-        self.is_processing = True
-        self.run_btn.config(state='disabled')
-        self.log_area.config(state='normal'); self.log_area.delete('1.0', tk.END); self.log_area.config(state='disabled')
-        threading.Thread(target=self.run_navy_logic, args=(tag, name, state, man, frig, iron), daemon=True).start()
 
     # --- LOGIC THREADS ---
     def run_transfer_logic(self, old_tag, new_tag, is_annex, raw_states):
