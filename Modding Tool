@@ -1907,27 +1907,26 @@ class App(tk.Tk):
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # 1. Mod Path with Custom Header
-        # We create a custom frame to serve as the labelwidget, containing Title + Buttons
-        title_frame = ttk.Frame(main_frame)
+        # We create a header frame separate from the LabelFrame to ensure full width expansion
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 0)) # No bottom padding so it sits on top of the box
 
         # Title
-        ttk.Label(title_frame, text="Global Configuration", foreground="#00ACC1", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+        ttk.Label(header_frame, text="Global Configuration", foreground="#00ACC1", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
 
         # Spacer (pushes everything else to the right)
-        ttk.Frame(title_frame).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Frame(header_frame).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Buttons in the title bar - Packed to RIGHT to align them to the far right
-        # Order: Auto-backup (rightmost? No, usually order is inverted for RIGHT pack, or we pack a frame to the right and pack left inside it)
-        # Let's pack them RIGHT. First packed is rightmost.
 
         self.autobackup_var = tk.BooleanVar(value=self.logic.auto_backup_enabled)
-        ttk.Checkbutton(title_frame, text="Auto-backup", variable=self.autobackup_var, command=self.toggle_auto_backup).pack(side=tk.RIGHT, padx=5)
+        ttk.Checkbutton(header_frame, text="Auto-backup", variable=self.autobackup_var, command=self.toggle_auto_backup).pack(side=tk.RIGHT, padx=5)
 
-        ttk.Button(title_frame, text="Backup Current Mod", command=self.start_backup).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(title_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(header_frame, text="Backup Current Mod", command=self.start_backup).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(header_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
 
-        # Main LabelFrame using the custom title frame
-        path_frame = ttk.LabelFrame(main_frame, labelwidget=title_frame, padding=15)
+        # Main Content Box (Untitled LabelFrame)
+        path_frame = ttk.LabelFrame(main_frame, text="", padding=15)
         path_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.path_var = tk.StringVar()
