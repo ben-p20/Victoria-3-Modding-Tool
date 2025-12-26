@@ -1674,7 +1674,7 @@ class Vic3Logic:
         if not name or not location:
             self.log("[ERROR] Mod name and location required.", 'error')
             return False
-
+        
         mod_root = os.path.join(location, name)
         if os.path.exists(mod_root):
             self.log(f"[ERROR] Directory already exists: {mod_root}", 'error')
@@ -1684,7 +1684,7 @@ class Vic3Logic:
             os.makedirs(mod_root)
             meta_dir = os.path.join(mod_root, ".metadata")
             os.makedirs(meta_dir)
-
+            
             metadata = {
                 "name" : name,
                 "id" : "",
@@ -1693,19 +1693,19 @@ class Vic3Logic:
                 "short_description" : "",
                 "tags" : [],
                 "relationships" : [],
-                "game_custom_data" : {
-                    "multiplayer_synchronized" : True
-                }
+                "game_custom_data" : { 
+                    "multiplayer_synchronized" : True 
+                } 
             }
-
+            
             with open(os.path.join(meta_dir, "metadata.json"), 'w') as f:
                 json.dump(metadata, f, indent=4)
-
+                
             self.log(f"[SUCCESS] Created new mod structure at {mod_root}", 'success')
-
+            
             self.set_mod_path(mod_root)
             return True
-
+            
         except Exception as e:
             self.log(f"[ERROR] Failed to create mod: {e}", 'error')
             traceback.print_exc()
@@ -1727,7 +1727,7 @@ class Vic3Logic:
         # List of items to copy. Tuple: (path, is_recursive)
         # Note: localization/English/countries_l_english -> localization/english/countries_l_english.yml
         # Note: common/character_templates* -> is_recursive=True
-
+        
         items = [
             ("localization/english/countries_l_english.yml", False),
             ("common/character_templates", True),
@@ -1752,13 +1752,13 @@ class Vic3Logic:
             # Assuming standard structure here.
             src = os.path.join(base_src, rel_path)
             dst = os.path.join(mod_path, rel_path)
-
+            
             if not os.path.exists(src):
                 # Try lower case for English path if failed
                 if "English" in rel_path or "english" in rel_path:
                     alt_path = rel_path.replace("English", "english")
                     src = os.path.join(base_src, alt_path)
-
+                    
             if not os.path.exists(src):
                 self.log(f"[WARN] Skipped missing vanilla path: {rel_path}", 'warn')
                 continue
@@ -1788,7 +1788,7 @@ class Vic3Logic:
 
         parent_dir = os.path.dirname(mod_path)
         mod_dirname = os.path.basename(mod_path)
-
+        
         # Scan for existing backups
         idx = 1
         while True:
@@ -1797,9 +1797,9 @@ class Vic3Logic:
             if not os.path.exists(backup_path):
                 break
             idx += 1
-
+            
         target_backup_path = os.path.join(parent_dir, f"{mod_dirname}_backup_{idx}")
-
+        
         try:
             self.log(f"[BACKUP] Creating backup at {target_backup_path}...", 'info')
             shutil.copytree(mod_path, target_backup_path)
@@ -1822,7 +1822,7 @@ class Vic3Logic:
             # Or copytree with dirs_exist_ok=True (Python 3.8+)
             if os.path.exists(backup_path):
                 shutil.rmtree(backup_path)
-
+            
             shutil.copytree(self.mod_path, backup_path)
             self.log(f"[AUTO-BACKUP] Updated {backup_name}", 'success')
         except Exception as e:
@@ -1885,7 +1885,7 @@ class App(tk.Tk):
                         self.path_var.set(path)
                         self.logic.set_mod_path(path)
                         self.log_message(f"Loaded Mod Path: {path}")
-
+                    
                     v_path = data.get("vanilla_path", "")
                     if os.path.exists(v_path):
                         self.vanilla_path_var.set(v_path)
@@ -1907,28 +1907,29 @@ class App(tk.Tk):
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # 1. Mod Path with Custom Header
-        # We create a header frame separate from the LabelFrame to ensure full width expansion
-        header_frame = ttk.Frame(main_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 0)) # No bottom padding so it sits on top of the box
-
+        # We create a custom frame to serve as the labelwidget, containing Title + Buttons
+        title_frame = ttk.Frame(main_frame)
+        
         # Title
-        ttk.Label(header_frame, text="Global Configuration", foreground="#00ACC1", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
-
+        ttk.Label(title_frame, text="Global Configuration", foreground="#00ACC1", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+        
         # Spacer (pushes everything else to the right)
-        ttk.Frame(header_frame).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
+        ttk.Frame(title_frame).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
         # Buttons in the title bar - Packed to RIGHT to align them to the far right
-
+        # Order: Auto-backup (rightmost? No, usually order is inverted for RIGHT pack, or we pack a frame to the right and pack left inside it)
+        # Let's pack them RIGHT. First packed is rightmost.
+        
         self.autobackup_var = tk.BooleanVar(value=self.logic.auto_backup_enabled)
-        ttk.Checkbutton(header_frame, text="Auto-backup", variable=self.autobackup_var, command=self.toggle_auto_backup).pack(side=tk.RIGHT, padx=5)
+        ttk.Checkbutton(title_frame, text="Auto-backup", variable=self.autobackup_var, command=self.toggle_auto_backup).pack(side=tk.RIGHT, padx=5)
+        
+        ttk.Button(title_frame, text="Backup Current Mod", command=self.start_backup).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(title_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
 
-        ttk.Button(header_frame, text="Backup Current Mod", command=self.start_backup).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(header_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
-
-        # Main Content Box (Untitled LabelFrame)
-        path_frame = ttk.LabelFrame(main_frame, text="", padding=15)
+        # Main LabelFrame using the custom title frame
+        path_frame = ttk.LabelFrame(main_frame, labelwidget=title_frame, padding=15)
         path_frame.pack(fill=tk.X, pady=(0, 10))
-
+        
         self.path_var = tk.StringVar()
         ttk.Label(path_frame, text="Mod Directory:").pack(side=tk.LEFT, padx=(0, 5))
         ttk.Entry(path_frame, textvariable=self.path_var).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
@@ -1982,20 +1983,20 @@ class App(tk.Tk):
         # 1. New Mod
         new_frame = ttk.LabelFrame(f, text="Create New Mod", padding=10)
         new_frame.pack(fill=tk.X, pady=5)
-
+        
         ttk.Label(new_frame, text="Mod Name:").pack(side=tk.LEFT, padx=5)
         self.mm_name = tk.StringVar()
         ttk.Entry(new_frame, textvariable=self.mm_name, width=20).pack(side=tk.LEFT, padx=5)
-
+        
         ttk.Label(new_frame, text="Location (Parent Folder):").pack(side=tk.LEFT, padx=5)
         self.mm_loc = tk.StringVar()
         # Default to standard paradox mod path if possible or current mod's parent
         if self.path_var.get():
              self.mm_loc.set(os.path.dirname(self.path_var.get()))
-
+        
         ttk.Entry(new_frame, textvariable=self.mm_loc, width=30).pack(side=tk.LEFT, padx=5)
         ttk.Button(new_frame, text="Browse...", command=self.browse_mod_parent).pack(side=tk.LEFT, padx=5)
-
+        
         ttk.Button(new_frame, text="Create Mod", command=self.start_create_mod).pack(side=tk.RIGHT, padx=5)
 
         # 2. Tools - Removed per user request (Auto-copy is integrated into Create Mod)
@@ -2012,7 +2013,7 @@ class App(tk.Tk):
         path = self.vanilla_path_var.get()
         if path and os.path.exists(path):
             return path
-
+        
         messagebox.showinfo("Setup", r"Select the victoria 3/game folder, e.g: C:\Program Files (x86)\Steam\steamapps\common\Victoria 3\game")
         folder = filedialog.askdirectory(title="Select Vanilla Game Directory")
         if folder:
@@ -2029,19 +2030,19 @@ class App(tk.Tk):
         if not name or not loc:
             messagebox.showerror("Error", "Name and Location required.")
             return
-
+            
         if self.logic.create_new_mod(name, loc):
             mod_path = os.path.join(loc, name)
             self.path_var.set(mod_path)
             self.save_config()
-
+            
             # Ask if user wants to copy vanilla files now
             if messagebox.askyesno("Setup", "Copy vanilla files to new mod now?"):
                  v_path = self.ensure_vanilla_path()
                  if v_path:
                     self.log_message("Starting file copy...", 'info')
                     threading.Thread(target=self.logic.copy_vanilla_files, args=(v_path, mod_path), daemon=True).start()
-
+            
             messagebox.showinfo("Success", f"Mod '{name}' created and loaded.")
 
     def start_copy_vanilla(self):
@@ -2049,7 +2050,7 @@ class App(tk.Tk):
         if not mod_path:
              messagebox.showerror("Error", "Mod path not selected.")
              return
-
+             
         v_path = self.ensure_vanilla_path()
         if not v_path: return
 
