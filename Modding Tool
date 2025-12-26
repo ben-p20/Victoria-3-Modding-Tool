@@ -1982,6 +1982,7 @@ class Vic3Logic:
 \tlanguage = {language}
 \ttraditions = {{ {t_str} }}
 \tgraphics = {graphics}
+\tobsessions = {{}}
 \tethnicities = {{
 {eth_str}\t}}
 {names_block}}}
@@ -2497,7 +2498,7 @@ class Vic3Logic:
         if s is not None:
             block = content[s:e]
             # Remove existing add_homeland lines
-            block = re.sub(r"\s*add_homeland\s*=\s*[A-Za-z0-9_]+", "", block)
+            block = re.sub(r"\s*add_homeland\s*=\s*[A-Za-z0-9_:]+", "", block)
             # Insert new ones before closing brace
             last_brace = block.rfind('}')
             new_block = block[:last_brace] + "\n" + new_homelands_str + "\n\t}"
@@ -2800,11 +2801,16 @@ class App(tk.Tk):
         self.style.configure('WhiteBorder.TFrame', background=FG_COLOR)
         self.style.configure('TButton', background=SECONDARY_BG, foreground=FG_COLOR, borderwidth=1, focuscolor=SECONDARY_BG)
         self.style.map('TButton', background=[('active', ACCENT_COLOR), ('disabled', '#2a2a2a')], foreground=[('disabled', '#666666')])
+        self.style.configure('BlackText.TButton', background=SECONDARY_BG, foreground="black", borderwidth=1, focuscolor=SECONDARY_BG)
+        self.style.map('BlackText.TButton', background=[('active', ACCENT_COLOR), ('disabled', '#2a2a2a')], foreground=[('disabled', '#666666')])
         self.style.configure('TEntry', fieldbackground=ENTRY_BG, foreground=FG_COLOR, bordercolor=SECONDARY_BG, lightcolor=SECONDARY_BG, darkcolor=SECONDARY_BG)
         self.style.configure('TCheckbutton', background=BG_COLOR, foreground=FG_COLOR)
         self.style.map('TCheckbutton', background=[('active', BG_COLOR)], indicatorcolor=[('selected', ACCENT_COLOR)])
         self.style.configure('TRadiobutton', background=BG_COLOR, foreground=FG_COLOR)
         self.style.map('TRadiobutton', background=[('active', BG_COLOR)], indicatorcolor=[('selected', ACCENT_COLOR)])
+
+        # Notebook Tab colors - Force black text
+        self.style.configure('TNotebook.Tab', foreground='black')
 
         # Combobox colors - Force black text for readability
         self.option_add('*TCombobox*Listbox.foreground', 'black')
@@ -4264,6 +4270,11 @@ class App(tk.Tk):
         # Store data for use
         self.cult_scan_data = c_data
 
+        # Build maps for clean display
+        self.heritage_map = {h.replace("heritage_", "").replace("_", " ").title(): h for h in c_heritages}
+        self.lang_map = {l.replace("language_", "").replace("_", " ").title(): l for l in c_langs}
+        self.trad_map = {t.replace("tradition_", "").replace("_", " ").title(): t for t in c_trads}
+
         # Form
         cf = ttk.Frame(tab_cult, padding=10)
         cf.pack(fill=tk.BOTH, expand=True)
@@ -4289,11 +4300,11 @@ class App(tk.Tk):
 
         ttk.Label(cf, text="Heritage:").grid(row=2, column=2, sticky=tk.W)
         self.rc_c_her = tk.StringVar()
-        ttk.Combobox(cf, textvariable=self.rc_c_her, values=c_heritages, state="readonly").grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
+        ttk.Combobox(cf, textvariable=self.rc_c_her, values=sorted(list(self.heritage_map.keys())), state="readonly").grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
 
         ttk.Label(cf, text="Language:").grid(row=3, column=0, sticky=tk.W)
         self.rc_c_lang = tk.StringVar()
-        ttk.Combobox(cf, textvariable=self.rc_c_lang, values=c_langs, state="readonly").grid(row=3, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Combobox(cf, textvariable=self.rc_c_lang, values=sorted(list(self.lang_map.keys())), state="readonly").grid(row=3, column=1, sticky=tk.W, padx=5, pady=2)
 
         ttk.Label(cf, text="Graphics:").grid(row=3, column=2, sticky=tk.W)
         self.rc_c_graph = tk.StringVar()
@@ -4313,7 +4324,7 @@ class App(tk.Tk):
         tf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         self.rc_c_trad_list = tk.Listbox(tf, height=6, bg="white", fg="black", selectmode=tk.MULTIPLE)
         self.rc_c_trad_list.pack(fill=tk.BOTH, expand=True)
-        for t in c_trads: self.rc_c_trad_list.insert(tk.END, t)
+        for t in sorted(list(self.trad_map.keys())): self.rc_c_trad_list.insert(tk.END, t)
 
         # Ethnicities
         ef = ttk.LabelFrame(list_frame, text="Ethnicities", padding=5)
@@ -4371,8 +4382,24 @@ class App(tk.Tk):
         name = self.rc_c_name.get().strip()
         if not key or not name: return messagebox.showerror("Error", "Key and Name required.")
 
-        # Get list selections
-        trads = [self.rc_c_trad_list.get(i) for i in self.rc_c_trad_list.curselection()]
+        if not self.rc_c_rel.get(): return messagebox.showerror("Error", "Religion required.")
+        if not self.rc_c_her.get(): return messagebox.showerror("Error", "Heritage required.")
+        if not self.rc_c_lang.get(): return messagebox.showerror("Error", "Language required.")
+        if not self.rc_c_graph.get(): return messagebox.showerror("Error", "Graphics required.")
+
+        # Map values back from display names
+        display_her = self.rc_c_her.get()
+        raw_her = self.heritage_map.get(display_her, display_her)
+
+        display_lang = self.rc_c_lang.get()
+        raw_lang = self.lang_map.get(display_lang, display_lang)
+
+        # Get list selections and map back
+        trads = []
+        for i in self.rc_c_trad_list.curselection():
+            display_t = self.rc_c_trad_list.get(i)
+            trads.append(self.trad_map.get(display_t, display_t))
+
         eths = [self.rc_c_eth_list.get(i) for i in self.rc_c_eth_list.curselection()]
 
         # Names
@@ -4383,7 +4410,7 @@ class App(tk.Tk):
 
         self.logic.save_new_culture(
              key, name, self.rc_c_rgb,
-             self.rc_c_rel.get(), self.rc_c_her.get(), self.rc_c_lang.get(),
+             self.rc_c_rel.get(), raw_her, raw_lang,
              trads, self.rc_c_graph.get(), eths, name_data
         )
         messagebox.showinfo("Success", f"Culture {key} saved.")
@@ -4392,6 +4419,8 @@ class App(tk.Tk):
         key = self.rc_r_key.get().strip()
         name = self.rc_r_name.get().strip()
         if not key or not name: return messagebox.showerror("Error", "Key and Name required.")
+
+        if not self.rc_r_her.get(): return messagebox.showerror("Error", "Heritage required.")
 
         self.logic.save_new_religion(
              key, name, self.rc_r_rgb, self.rc_r_her.get(), self.rc_r_icon.get()
@@ -4526,20 +4555,37 @@ class App(tk.Tk):
     def refresh_homelands_list(self):
         self.lb_homelands.delete(0, tk.END)
         for h in self.current_state_homelands:
-            self.lb_homelands.insert(tk.END, h)
+            # Display without prefix for readability, but keep internal list intact
+            display_val = h.replace("cu:", "").replace("c:", "")
+            self.lb_homelands.insert(tk.END, display_val)
 
     def add_state_homeland(self):
         val = self.sm_homeland_add.get().strip()
-        if val and val not in self.current_state_homelands:
-            self.current_state_homelands.append(val)
-            self.refresh_homelands_list()
+        if val:
+            # Check if it needs prefix (it's a culture)
+            # We assume the dropdown values are cultures
+            prefixed_val = f"cu:{val}" if not val.startswith("cu:") and not val.startswith("c:") else val
+
+            if prefixed_val not in self.current_state_homelands:
+                self.current_state_homelands.append(prefixed_val)
+                self.refresh_homelands_list()
 
     def remove_state_homeland(self):
         sel = self.lb_homelands.curselection()
         if sel:
-            val = self.lb_homelands.get(sel[0])
-            if val in self.current_state_homelands:
-                self.current_state_homelands.remove(val)
+            display_val = self.lb_homelands.get(sel[0])
+            # We need to find the matching entry in the internal list
+            # Try reconstructing likely prefixes or search
+            to_remove = None
+            if display_val in self.current_state_homelands:
+                to_remove = display_val
+            elif f"cu:{display_val}" in self.current_state_homelands:
+                to_remove = f"cu:{display_val}"
+            elif f"c:{display_val}" in self.current_state_homelands:
+                to_remove = f"c:{display_val}"
+
+            if to_remove:
+                self.current_state_homelands.remove(to_remove)
                 self.refresh_homelands_list()
 
     def save_state_homelands_ui(self):
