@@ -1743,7 +1743,8 @@ class Vic3Logic:
             ("common/history/pops", True),
             ("common/history/population", True),
             ("common/history/states", True),
-            ("common/history/trade", True)
+            ("common/history/trade", True),
+            ("common/history/power_blocs", True)
         ]
 
         copied_count = 0
@@ -1828,6 +1829,296 @@ class Vic3Logic:
         except Exception as e:
             self.log(f"[ERROR] Auto-backup failed: {e}", 'error')
 
+    # --- POWER BLOC LOGIC ---
+    def get_all_power_blocs(self):
+        """Scans history/global for existing power blocs."""
+        blocs = []
+        hist_dir = os.path.join(self.mod_path, "common/history/power_blocs")
+        if not os.path.exists(hist_dir): return blocs
+
+        for root, _, files in os.walk(hist_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                # We look for c:TAG ?= { ... create_power_bloc = { name = XXX ... } ... }
+                idx = 0
+                while True:
+                    m = re.search(r"c:([A-Za-z0-9_]+)\s*\??=\s*\{", content[idx:])
+                    if not m: break
+                    tag = m.group(1)
+                    start = idx + m.start()
+                    _, end = self.find_block_content(content, idx + m.end() - 1)
+                    if end:
+                        block = content[start:end]
+                        pb_match = re.search(r"create_power_bloc\s*=\s*\{", block)
+                        if pb_match:
+                            # Extract name
+                            pb_start = pb_match.start()
+                            _, pb_end = self.find_block_content(block, pb_match.end() - 1)
+                            if pb_end:
+                                pb_block = block[pb_start:pb_end]
+                                name_m = re.search(r"name\s*=\s*([A-Za-z0-9_]+)", pb_block)
+                                name = name_m.group(1) if name_m else "Unknown"
+                                blocs.append({"tag": tag, "name": name})
+                        idx = end
+                    else:
+                        idx = start + 1
+        return blocs
+
+    PB_IDENTITIES = [
+        "identity_trade_league",
+        "identity_sovereign_empire",
+        "identity_ideological_union",
+        "identity_religious_convocation",
+        "identity_military_treaty",
+        "identity_cultural_commonwealth"
+    ]
+
+    PB_EXCLUSIVE_PRINCIPLES = {
+        "identity_trade_league": ["principle_internal_trade", "principle_external_trade"],
+        "identity_sovereign_empire": ["principle_vassalization", "principle_exploitation"],
+        "identity_ideological_union": ["principle_ideological_truth", "principle_creative_legislature"],
+        "identity_religious_convocation": ["principle_divine_economics", "principle_sacred_civics"],
+        "identity_military_treaty": ["principle_aggressive_coordination", "principle_defensive_cooperation"],
+        "identity_cultural_commonwealth": ["principle_shared_canon"]
+    }
+
+    PB_GLOBAL_PRINCIPLES = [
+        "principle_construction",
+        "principle_foreign_investment",
+        "principle_police_coordination",
+        "principle_freedom_of_movement",
+        "principle_food_standardization",
+        "principle_advanced_research",
+        "principle_colonial_offices",
+        "principle_transportation",
+        "principle_militarized_industry",
+        "principle_market_unification"
+    ]
+
+    def get_power_bloc_data(self, tag):
+        """Parses power bloc data for a specific tag from history/global."""
+        clean_tag = tag.replace("c:", "").strip()
+        hist_dir = os.path.join(self.mod_path, "common/history/power_blocs")
+        if not os.path.exists(hist_dir): return None
+
+        data = {
+            "name": "", "identity": "", "map_color": "", "date": "1836.1.1", "principles": [], "members": []
+        }
+
+        for root, _, files in os.walk(hist_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
+                if s is not None:
+                    block = content[s:e]
+                    pb_match = re.search(r"create_power_bloc\s*=\s*\{", block)
+                    if pb_match:
+                        # Found it!
+                        pb_s, pb_e = self.find_block_content(block, pb_match.end() - 1)
+                        if pb_s:
+                            pb_inner = block[pb_s:pb_e]
+
+                            nm = re.search(r"name\s*=\s*([A-Za-z0-9_]+)", pb_inner)
+                            if nm: data["name"] = nm.group(1)
+
+                            im = re.search(r"identity\s*=\s*([A-Za-z0-9_]+)", pb_inner)
+                            if im: data["identity"] = im.group(1)
+
+                            dm = re.search(r"founding_date\s*=\s*([\d\.]+)", pb_inner)
+                            if dm: data["date"] = dm.group(1)
+
+                            # Map Color - capture whole value block or string
+                            cm = re.search(r"map_color\s*=\s*(\{.+?\}|hsv\s*\{.+?\})", pb_inner, re.DOTALL)
+                            if cm:
+                                data["map_color"] = " ".join(cm.group(1).split()) # Normalize whitespace
+
+                            # Members
+                            mem_matches = re.finditer(r"member\s*=\s*([A-Za-z0-9_:]+)", pb_inner)
+                            for mm in mem_matches:
+                                data["members"].append(mm.group(1))
+
+                            # Primary Principle
+                            pm = re.search(r"principle\s*=\s*([A-Za-z0-9_]+)", pb_inner)
+                            if pm:
+                                full = pm.group(1)
+                                m_lev = re.match(r"(.*)_(\d+)$", full)
+                                if m_lev:
+                                    data["principles"].append({"key": m_lev.group(1), "level": int(m_lev.group(2))})
+                                else:
+                                    data["principles"].append({"key": full, "level": 1})
+
+                            # DLC Principles (sibling `if` block)
+                            # We search for 'if = { limit = { has_dlc_feature = power_bloc_features } ... }'
+                            # inside the COUNTRY block (sibling to create_power_bloc)
+
+                            # Scan for if blocks
+                            cursor = 0
+                            while cursor < len(block):
+                                if_m = re.search(r"\bif\s*=\s*\{", block[cursor:])
+                                if not if_m: break
+                                if_start = cursor + if_m.start()
+                                if_s, if_e = self.find_block_content(block, cursor + if_m.end() - 1)
+                                if if_s:
+                                    if_inner = block[if_s:if_e]
+                                    if "power_bloc_features" in if_inner:
+                                        # Check inside for power_bloc = { add_principle = ... }
+                                        pb_eff_m = re.search(r"power_bloc\s*=\s*\{", if_inner)
+                                        if pb_eff_m:
+                                            pe_s, pe_e = self.find_block_content(if_inner, pb_eff_m.end() - 1)
+                                            if pe_s:
+                                                eff_inner = if_inner[pe_s:pe_e]
+                                                # extract all add_principle
+                                                for apm in re.finditer(r"add_principle\s*=\s*([A-Za-z0-9_]+)", eff_inner):
+                                                    full = apm.group(1)
+                                                    m_lev = re.match(r"(.*)_(\d+)$", full)
+                                                    if m_lev:
+                                                        data["principles"].append({"key": m_lev.group(1), "level": int(m_lev.group(2))})
+                                                    else:
+                                                        data["principles"].append({"key": full, "level": 1})
+                                    cursor = if_e
+                                else:
+                                    cursor = if_start + 1
+
+                            # De-dupe by key (keep last? or first? usually first is primary)
+                            # Actually, list of dicts isn't hashable for set().
+                            # We'll just keep them all for now, UI can handle uniqueness validation.
+                            return data
+        return None
+
+    def save_power_bloc_data(self, tag, data):
+        """Saves power bloc data to history/global."""
+        self.perform_auto_backup()
+        hist_dir = os.path.join(self.mod_path, "common/history/power_blocs")
+        os.makedirs(hist_dir, exist_ok=True)
+        target_file = os.path.join(hist_dir, "00_power_blocs.txt")
+
+        # If file doesn't exist, create it with wrapper
+        if not os.path.exists(target_file):
+            with open(target_file, 'w', encoding='utf-8-sig') as f: f.write("POWER_BLOCS = {\n}\n")
+
+        try:
+            with open(target_file, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+            with open(target_file, 'r', encoding='utf-8') as f: content = f.read()
+
+        clean_tag = tag.replace("c:", "").strip()
+
+        # Prepare content strings
+        princ_strs = [f"{p['key']}_{p['level']}" for p in data["principles"]]
+
+        principle_1 = princ_strs[0] if princ_strs else ""
+        extra_principles = princ_strs[1:] if len(princ_strs) > 1 else []
+
+        map_col_str = data["map_color"]
+        if not map_col_str: map_col_str = "{ 255 255 255 }"
+
+        # Reconstruct members
+        members_list = data.get("members", [])
+        # User requested NOT to auto-add leader as member
+
+        members_str = "\n\t\t\t".join([f"member = {m}" for m in members_list])
+
+        create_block = f"""
+\t\tcreate_power_bloc = {{
+\t\t\tname = {data['name']}
+\t\t\tmap_color = {map_col_str}
+\t\t\tfounding_date = {data['date']}
+\t\t\tidentity = {data['identity']}
+\t\t\tprinciple = {principle_1}
+\t\t\t{members_str}
+\t\t}}"""
+
+        extra_block = ""
+        if extra_principles:
+            adds = "\n\t\t\t\t".join([f"add_principle = {p}" for p in extra_principles])
+            extra_block = f"""
+\t\tif = {{
+\t\t\tlimit = {{
+\t\t\t\thas_dlc_feature = power_bloc_features
+\t\t\t}}
+\t\t\tpower_bloc = {{
+\t\t\t\t{adds}
+\t\t\t}}
+\t\t}}"""
+
+        # Locate country block
+        s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
+
+        if s is not None:
+            # Modify existing country block
+            block = content[s:e]
+
+            # Remove existing create_power_bloc and if-dlc blocks from within this country block
+            # This is tricky with regex. Best to rebuild the block content.
+            # We want to preserve other things? Usually nothing else is in c:TAG block in 00_power_blocs.txt except comments/members
+            # But users might put stuff there.
+
+            # Strategy: Replace the entire block content with our new content
+            # Assuming the user only uses this file for power blocs as per vanilla structure.
+
+            new_inner = create_block + extra_block + "\n"
+            new_block = f"c:{clean_tag} ?= {{{new_inner}\t}}"
+
+            content = content[:s] + new_block + content[e:]
+
+        else:
+            # Create new country block inside POWER_BLOCS
+            # Find POWER_BLOCS wrapper
+            pbs, pbe = self.get_block_range_safe(content, "POWER_BLOCS")
+            if pbs is not None:
+                new_entry = f"\n\tc:{clean_tag} ?= {{{create_block}{extra_block}\n\t}}"
+                # Insert before closing brace
+                content = content[:pbe-1] + new_entry + "\n}" + content[pbe:]
+            else:
+                # Wrap everything? Or append?
+                content += f"\nPOWER_BLOCS = {{\n\tc:{clean_tag} ?= {{{create_block}{extra_block}\n\t}}\n}}"
+
+        with open(target_file, 'w', encoding='utf-8-sig') as f: f.write(content)
+        self.log(f"[SAVE] Power Bloc saved for {clean_tag}", 'success')
+
+    def remove_power_bloc(self, tag):
+        """Removes power bloc definition for a tag."""
+        self.perform_auto_backup()
+        hist_dir = os.path.join(self.mod_path, "common/history/power_blocs")
+        if not os.path.exists(hist_dir): return
+        clean_tag = tag.replace("c:", "").strip()
+
+        for root, _, files in os.walk(hist_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                s, e = self.get_block_range_safe(content, f"c:{clean_tag}")
+                if s is not None:
+                    # We just remove the whole country block from this file?
+                    # Generally yes, if it only contains the PB def.
+                    # Or we can just empty it? Removing is cleaner.
+
+                    # Check if it has other stuff?
+                    # For safety, let's just remove the block.
+                    content = content[:s] + content[e:]
+                    # Clean up empty lines?
+
+                    with open(path, 'w', encoding='utf-8-sig') as f: f.write(content)
+                    self.log(f"[REMOVE] Power Bloc removed for {clean_tag}", 'success')
+                    return
+
 # =============================================================================
 #  GUI IMPLEMENTATION
 # =============================================================================
@@ -1875,6 +2166,10 @@ class App(tk.Tk):
         self.option_add('*TCombobox*Listbox.foreground', 'black')
         self.option_add('*TCombobox*Listbox.background', 'white')
         self.style.configure('TCombobox', foreground='black', fieldbackground='white', background='white')
+
+        # Treeview colors - Force black text
+        self.style.configure("Treeview", background="white", foreground="black", fieldbackground="white")
+        self.style.map("Treeview", background=[('selected', '#00ACC1')], foreground=[('selected', 'white')])
 
     def load_config(self):
         try:
@@ -1949,6 +2244,7 @@ class App(tk.Tk):
         ttk.Button(nav_frame, text="Military Creator", command=self.show_military_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Modify Country", command=self.show_country_mod_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Diplomacy", command=self.show_diplomacy_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(nav_frame, text="Powerblock Manager", command=self.show_power_bloc_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         # 3. Dynamic Content
         self.content_frame = ttk.Frame(main_frame)
@@ -2660,6 +2956,355 @@ class App(tk.Tk):
 
         self.logic.set_relations(tag, target, val)
         self.log_message(f"Set relations {tag}<->{target} to {val}")
+
+    # --- MODE 7: POWERBLOCK MANAGER ---
+    def show_power_bloc_ui(self):
+        self.clear_content()
+        self.mode = "POWERBLOC"
+        f = ttk.LabelFrame(self.content_frame, text="Powerblock Manager", padding=15)
+        f.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Selector (Tag or Existing Bloc)
+        sel_frame = ttk.Frame(f)
+        sel_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(sel_frame, text="Target Tag:").pack(side=tk.LEFT)
+        self.pb_tag = tk.StringVar()
+        e_tag = ttk.Entry(sel_frame, textvariable=self.pb_tag, width=10)
+        e_tag.pack(side=tk.LEFT, padx=5)
+        e_tag.bind("<FocusOut>", lambda e: self.load_pb_data_by_tag())
+
+        ttk.Label(sel_frame, text="OR Select Bloc:").pack(side=tk.LEFT, padx=(15, 5))
+        self.pb_select_var = tk.StringVar()
+        self.cb_pb_select = ttk.Combobox(sel_frame, textvariable=self.pb_select_var, state="readonly", width=30)
+        self.cb_pb_select.pack(side=tk.LEFT, padx=5)
+        self.cb_pb_select.bind("<<ComboboxSelected>>", self.on_pb_select)
+
+        ttk.Button(sel_frame, text="Refresh List", command=self.refresh_pb_list).pack(side=tk.LEFT, padx=5)
+
+        # 2. Details Form
+        det_frame = ttk.LabelFrame(f, text="Bloc Details", padding=10)
+        det_frame.pack(fill=tk.X, pady=5)
+
+        # Name
+        ttk.Label(det_frame, text="Name (Key):").grid(row=0, column=0, sticky=tk.W)
+        self.pb_name = tk.StringVar()
+        ttk.Entry(det_frame, textvariable=self.pb_name, width=25).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+
+        # Identity
+        ttk.Label(det_frame, text="Identity:").grid(row=0, column=2, sticky=tk.W, padx=(10,0))
+        self.pb_identity = tk.StringVar()
+        self.cb_pb_identity = ttk.Combobox(det_frame, textvariable=self.pb_identity, state="readonly", width=30)
+        self.cb_pb_identity.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+        self.cb_pb_identity.bind("<<ComboboxSelected>>", self.refresh_principle_options)
+
+        # Color
+        ttk.Label(det_frame, text="Color:").grid(row=1, column=0, sticky=tk.W)
+        self.pb_color = tk.StringVar()
+        self.pb_color_preview = tk.Label(det_frame, text="     ", bg="#FFFFFF", relief="solid", borderwidth=1, width=10)
+        self.pb_color_preview.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Button(det_frame, text="Pick Color", command=self.pick_pb_color).grid(row=1, column=2, padx=2)
+
+        # Founding Date
+        ttk.Label(det_frame, text="Founding Date:").grid(row=2, column=0, sticky=tk.W)
+        self.pb_date = tk.StringVar(value="1836.1.1")
+        ttk.Entry(det_frame, textvariable=self.pb_date, width=15).grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+
+        # Tag Leader (Info)
+        ttk.Label(det_frame, text="Leader Tag:").grid(row=2, column=2, sticky=tk.W, padx=(10,0))
+        self.pb_leader_var = tk.StringVar()
+        ttk.Entry(det_frame, textvariable=self.pb_leader_var, width=10).grid(row=2, column=3, sticky=tk.W, padx=5)
+
+        # 3. Main Body (Principles + Members)
+        main_body = ttk.Frame(f)
+        main_body.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Left: Principles
+        princ_frame = ttk.LabelFrame(main_body, text="Principles", padding=10)
+        princ_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        self.pb_tree = ttk.Treeview(princ_frame, columns=("key", "level"), show="headings", height=6)
+        self.pb_tree.heading("key", text="Principle Key"); self.pb_tree.heading("level", text="Level")
+        self.pb_tree.column("key", width=200); self.pb_tree.column("level", width=50, anchor="center")
+        self.pb_tree.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+
+        p_ctrl = ttk.Frame(princ_frame)
+        p_ctrl.pack(fill=tk.X)
+        ttk.Label(p_ctrl, text="Add:").pack(side=tk.LEFT)
+        self.pb_princ_add_var = tk.StringVar()
+        self.cb_pb_princ_add = ttk.Combobox(p_ctrl, textvariable=self.pb_princ_add_var, state="readonly", width=25)
+        self.cb_pb_princ_add.pack(side=tk.LEFT, padx=5)
+        self.pb_princ_level = tk.StringVar(value="1")
+        ttk.Combobox(p_ctrl, textvariable=self.pb_princ_level, values=["1", "2", "3"], state="readonly", width=3).pack(side=tk.LEFT)
+        ttk.Button(p_ctrl, text="+", width=3, command=self.add_pb_principle).pack(side=tk.LEFT, padx=5)
+        ttk.Button(p_ctrl, text="Remove", width=7, command=self.remove_pb_principle).pack(side=tk.RIGHT)
+
+        # Right: Members
+        memb_frame = ttk.LabelFrame(main_body, text="Members (Subjects are automatically made members)", padding=10)
+        memb_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        self.lb_members = tk.Listbox(memb_frame, height=6, bg="white", fg="black")
+        self.lb_members.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+
+        m_ctrl = ttk.Frame(memb_frame)
+        m_ctrl.pack(fill=tk.X)
+        ttk.Label(m_ctrl, text="Add Tag:").pack(side=tk.LEFT)
+        self.pb_member_add_var = tk.StringVar()
+        ttk.Entry(m_ctrl, textvariable=self.pb_member_add_var, width=8).pack(side=tk.LEFT, padx=5)
+        ttk.Button(m_ctrl, text="+", width=3, command=self.add_pb_member).pack(side=tk.LEFT)
+        ttk.Button(m_ctrl, text="Remove", width=7, command=self.remove_pb_member).pack(side=tk.RIGHT)
+
+        # 4. Actions
+        action_bar = ttk.Frame(f)
+        action_bar.pack(fill=tk.X, pady=10)
+
+        ttk.Button(action_bar, text="Create / Modify", command=self.save_power_bloc).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(action_bar, text="Remove Power Bloc", command=self.delete_power_bloc).pack(side=tk.RIGHT, padx=5)
+
+        # Init
+        self.refresh_pb_list()
+        self.load_pb_definitions()
+
+    def refresh_pb_list(self):
+        blocs = self.logic.get_all_power_blocs()
+        self.pb_list_data = blocs
+        values = [f"{b['name']} ({b['tag']})" for b in blocs]
+        self.cb_pb_select['values'] = values
+
+    def load_pb_definitions(self):
+        self.cb_pb_identity['values'] = self.logic.PB_IDENTITIES
+
+    def refresh_principle_options(self, event=None):
+        current_id = self.pb_identity.get()
+        options = list(self.logic.PB_GLOBAL_PRINCIPLES)
+
+        if current_id in self.logic.PB_EXCLUSIVE_PRINCIPLES:
+            options.extend(self.logic.PB_EXCLUSIVE_PRINCIPLES[current_id])
+
+        self.cb_pb_princ_add['values'] = sorted(options)
+
+        # Validate and remove incompatible principles
+        exclusive_map = self.logic.PB_EXCLUSIVE_PRINCIPLES
+        items_to_remove = []
+
+        for item in self.pb_tree.get_children():
+            vals = self.pb_tree.item(item)['values']
+            if not vals: continue
+            key = vals[0]
+
+            # Check Redundancy
+            if current_id == "identity_trade_league" and key == "principle_market_unification":
+                items_to_remove.append(item)
+                continue
+
+            # Check Exclusive
+            is_exclusive = False
+            allowed = False
+            for ident, p_list in exclusive_map.items():
+                if key in p_list:
+                    is_exclusive = True
+                    if ident == current_id:
+                        allowed = True
+
+            if is_exclusive and not allowed:
+                items_to_remove.append(item)
+
+        for item in items_to_remove:
+            self.pb_tree.delete(item)
+
+    def on_pb_select(self, event):
+        idx = self.cb_pb_select.current()
+        if idx >= 0:
+            tag = self.pb_list_data[idx]['tag']
+            self.pb_tag.set(tag)
+            self.load_pb_data_by_tag()
+
+    def load_pb_data_by_tag(self):
+        tag = self.logic.format_tag_clean(self.pb_tag.get())
+        if not tag: return
+
+        self.pb_leader_var.set(tag)
+
+        data = self.logic.get_power_bloc_data(tag)
+        # Clear Tree
+        for item in self.pb_tree.get_children():
+            self.pb_tree.delete(item)
+
+        if data:
+            self.pb_name.set(data['name'])
+            self.pb_identity.set(data['identity'])
+            self.pb_color.set(data['map_color'])
+
+            # Parse color for preview
+            try:
+                vals = re.findall(r"[\d\.]+", data['map_color'])
+                if len(vals) >= 3:
+                    # Vic3 often uses 0-1 float or 0-255 int or hsv
+                    # Simple heuristic: if any > 1, assume int. Else float.
+                    # Wait, hsv uses float usually. { 0.99 0.7 0.9 }
+                    v1, v2, v3 = float(vals[0]), float(vals[1]), float(vals[2])
+                    if "hsv" in data['map_color'].lower():
+                        # hsv to rgb conversion is complex, for now let's just skip or default white if hsv
+                        # Tkinter doesn't do HSV easily.
+                        # If user used Pick Color, we saved as { r g b } ints.
+                        # If loading vanilla file, it might be hsv.
+                        # Just show white if complex.
+                        self.pb_color_preview.config(bg="#FFFFFF")
+                    else:
+                        if v1 <= 1.0 and v2 <= 1.0 and v3 <= 1.0:
+                            v1, v2, v3 = int(v1*255), int(v2*255), int(v3*255)
+                        else:
+                            v1, v2, v3 = int(v1), int(v2), int(v3)
+                        hex_col = f'#{v1:02x}{v2:02x}{v3:02x}'
+                        self.pb_color_preview.config(bg=hex_col)
+            except:
+                self.pb_color_preview.config(bg="#FFFFFF")
+
+            self.pb_date.set(data['date'])
+            self.pb_current_members = data.get("members", [])
+
+            for p in data['principles']:
+                self.pb_tree.insert("", tk.END, values=(p["key"], p["level"]))
+
+            self.refresh_principle_options()
+            self.refresh_members_list()
+            self.log_message(f"Loaded Power Bloc for {tag}", 'success')
+        else:
+            self.pb_name.set("")
+            self.pb_identity.set("")
+            self.pb_color.set("")
+            self.pb_color_preview.config(bg="#FFFFFF")
+            self.pb_date.set("1836.1.1")
+            self.pb_current_members = []
+            self.refresh_members_list()
+            self.refresh_principle_options()
+            self.log_message(f"No existing Power Bloc for {tag}. Ready to create.", 'info')
+
+    def refresh_members_list(self):
+        self.lb_members.delete(0, tk.END)
+        for m in self.pb_current_members:
+            self.lb_members.insert(tk.END, m)
+
+    def add_pb_member(self):
+        val = self.logic.format_tag_clean(self.pb_member_add_var.get())
+        if val:
+            full_val = f"c:{val}" if not val.startswith("c:") else val
+            if full_val not in self.pb_current_members:
+                self.pb_current_members.append(full_val)
+                self.refresh_members_list()
+                self.pb_member_add_var.set("")
+
+    def remove_pb_member(self):
+        sel = self.lb_members.curselection()
+        if sel:
+            idx = sel[0]
+            val = self.lb_members.get(idx)
+            if val in self.pb_current_members:
+                self.pb_current_members.remove(val)
+                self.refresh_members_list()
+
+    def pick_pb_color(self):
+        color = colorchooser.askcolor(title="Choose Map Color")
+        if color[0]:
+            r, g, b = int(color[0][0]), int(color[0][1]), int(color[0][2])
+            self.pb_color.set(f"{{ {r} {g} {b} }}")
+            self.pb_color_preview.config(bg=color[1])
+
+    def add_pb_principle(self):
+        key = self.pb_princ_add_var.get()
+        try:
+            level = int(self.pb_princ_level.get())
+        except: level = 1
+
+        if not key: return
+
+        current_id = self.pb_identity.get()
+
+        # VALIDATION RULES
+
+        # 1. Identity Lock
+        exclusive_map = self.logic.PB_EXCLUSIVE_PRINCIPLES
+        is_exclusive = False
+        allowed_for_current = False
+
+        for ident, p_list in exclusive_map.items():
+            if key in p_list:
+                is_exclusive = True
+                if ident == current_id:
+                    allowed_for_current = True
+
+        if is_exclusive and not allowed_for_current:
+            return messagebox.showerror("Validation Error", f"Principle '{key}' is not allowed for identity '{current_id}'.")
+
+        # 2. Uniqueness
+        for item in self.pb_tree.get_children():
+            vals = self.pb_tree.item(item)['values']
+            if vals[0] == key:
+                return messagebox.showerror("Validation Error", f"Principle '{key}' is already added.")
+
+        # 3. Trade League Redundancy
+        if current_id == "identity_trade_league" and key == "principle_market_unification":
+            return messagebox.showerror("Validation Error", "Trade Leagues automatically function as a Customs Union; this principle is redundant.")
+
+        # Add to Tree
+        self.pb_tree.insert("", tk.END, values=(key, level))
+
+    def remove_pb_principle(self):
+        sel = self.pb_tree.selection()
+        if sel:
+            self.pb_tree.delete(sel[0])
+
+    def save_power_bloc(self):
+        # Original tag loaded/selected
+        orig_tag = self.logic.format_tag_clean(self.pb_tag.get())
+
+        # New tag from leader field
+        new_tag = self.logic.format_tag_clean(self.pb_leader_var.get())
+
+        if not new_tag: return messagebox.showerror("Error", "Leader Tag required.")
+
+        name = self.pb_name.get().strip()
+        identity = self.pb_identity.get().strip()
+        color = self.pb_color.get().strip()
+        date = self.pb_date.get().strip()
+
+        principles = []
+        for item in self.pb_tree.get_children():
+            vals = self.pb_tree.item(item)['values']
+            principles.append({"key": vals[0], "level": int(vals[1])})
+
+        if not name or not identity: return messagebox.showerror("Error", "Name and Identity required.")
+
+        if not hasattr(self, 'pb_current_members'):
+             self.pb_current_members = []
+
+        data = {
+            "name": name,
+            "identity": identity,
+            "map_color": color,
+            "date": date,
+            "principles": principles,
+            "members": self.pb_current_members
+        }
+
+        # If tag changed, remove old and save new
+        if orig_tag and orig_tag != new_tag:
+            if messagebox.askyesno("Confirm", f"Move Power Bloc from {orig_tag} to {new_tag}?"):
+                self.logic.remove_power_bloc(orig_tag)
+                self.pb_tag.set(new_tag) # Update current tag
+
+        self.logic.save_power_bloc_data(new_tag, data)
+        self.refresh_pb_list()
+        messagebox.showinfo("Success", f"Power Bloc saved for {new_tag}.")
+
+    def delete_power_bloc(self):
+        tag = self.logic.format_tag_clean(self.pb_tag.get())
+        if not tag: return
+
+        if messagebox.askyesno("Confirm", f"Remove Power Bloc for {tag}?"):
+            self.logic.remove_power_bloc(tag)
+            self.refresh_pb_list()
+            self.load_pb_data_by_tag()
 
     # --- SHARED FUNCTIONS ---
     def browse_folder(self):
