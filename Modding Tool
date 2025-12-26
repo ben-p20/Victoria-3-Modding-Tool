@@ -1881,7 +1881,7 @@ class Vic3Logic:
 
     PB_EXCLUSIVE_PRINCIPLES = {
         "identity_trade_league": ["principle_internal_trade", "principle_external_trade"],
-        "identity_sovereign_empire": ["principle_vassalization", "principle_exploitation"],
+        "identity_sovereign_empire": ["principle_vassalization", "principle_exploit_members"],
         "identity_ideological_union": ["principle_ideological_truth", "principle_creative_legislature"],
         "identity_religious_convocation": ["principle_divine_economics", "principle_sacred_civics"],
         "identity_military_treaty": ["principle_aggressive_coordination", "principle_defensive_cooperation"],
@@ -1896,9 +1896,10 @@ class Vic3Logic:
         "principle_food_standardization",
         "principle_advanced_research",
         "principle_colonial_offices",
-        "principle_transportation",
-        "principle_militarized_industry",
-        "principle_market_unification"
+        "principle_transport",
+        "principle_military_industry",
+        "principle_market_unification",
+        "principle_companies"
     ]
 
     PB_PRIMARY_PRINCIPLE_OPTIONS = {
@@ -1908,7 +1909,7 @@ class Vic3Logic:
         ],
         "identity_sovereign_empire": [
             "principle_vassalization",
-            "principle_exploitation"
+            "principle_exploit_members"
         ],
         "identity_ideological_union": [
             "principle_creative_legislature",
