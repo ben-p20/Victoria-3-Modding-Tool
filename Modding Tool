@@ -1,9 +1,10 @@
 import os
 import re
+import shutil
 import traceback
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext, messagebox, colorchooser
+from tkinter import ttk, filedialog, scrolledtext, messagebox, colorchooser, simpledialog
 import sys
 import queue
 import json
@@ -17,10 +18,15 @@ class Vic3Logic:
     def __init__(self, log_callback):
         self.log = log_callback
         self.mod_path = ""
+        self.vanilla_path = ""
+        self.auto_backup_enabled = False
         self.stop_event = threading.Event()
 
     def set_mod_path(self, path):
         self.mod_path = path
+
+    def set_vanilla_path(self, path):
+        self.vanilla_path = path
 
     def format_tag_clean(self, user_input):
         return user_input.upper().strip()
@@ -307,6 +313,7 @@ class Vic3Logic:
         return closest_name
 
     def create_country_files(self, tag, name, adjective, capital, gov_type, color_rgb, cultures_list, religion, tier, country_type, old_tag):
+        self.perform_auto_backup()
         self.log(f"[GEN] Creating core files for {tag} ({name})...")
         r_i, g_i, b_i = int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2])
         flag_color_name = self.get_nearest_vic3_color((r_i, g_i, b_i))
@@ -467,6 +474,7 @@ class Vic3Logic:
 
     def create_army_file(self, tag, army_name, target_state, inf, art, cav):
         """Creates a new army history file."""
+        self.perform_auto_backup()
         self.log(f"[GEN] Creating Army '{army_name}' for {tag}...")
         final_state, hq_region = self._get_location_data(tag, target_state)
         if not final_state: return self.log("[ERROR] Aborting: Location unknown.", 'error')
@@ -517,6 +525,7 @@ class Vic3Logic:
 
     def create_navy_file(self, tag, navy_name, target_state, manowar, frigate, ironclad):
         """Creates a new navy history file."""
+        self.perform_auto_backup()
         self.log(f"[GEN] Creating Navy '{navy_name}' for {tag}...")
         self.log(f"   [WARN] Ensure {target_state if target_state else 'Capital'} is a COASTAL state!", 'warn')
         
@@ -713,6 +722,9 @@ class Vic3Logic:
         return content
 
     def transfer_ownership_batch(self, state_list, old_tag, new_tag):
+        # Auto-backup handled by caller or usually this is part of a larger operation like Create Country
+        # If used standalone via "Transfer States", we should backup.
+        self.perform_auto_backup()
         folders = ["states", "pops", "buildings"]
         results = {s: [] for s in state_list}
         for folder in folders:
@@ -891,6 +903,7 @@ class Vic3Logic:
         return True
 
     def clean_military_smart(self, old_tag, new_tag, region, state_list):
+        # Auto-backup usually done before this in transfer flow
         if not region: return
         mil_dir = os.path.join(self.mod_path, "common/history/military_formations")
         if os.path.exists(mil_dir):
@@ -932,6 +945,7 @@ class Vic3Logic:
         return (n2 if n2 else n1), (a2 if a2 else a1)
 
     def save_country_localization(self, tag, name, adj):
+        self.perform_auto_backup()
         loc_dir = os.path.join(self.mod_path, "localization", "english")
         rep_dir = os.path.join(loc_dir, "replace")
         os.makedirs(rep_dir, exist_ok=True)
@@ -1010,6 +1024,7 @@ class Vic3Logic:
         return None, None, None
 
     def save_country_definition(self, tag, rgb, capital, filepath):
+        self.perform_auto_backup()
         if not filepath or not os.path.exists(filepath):
             self.log("[ERROR] Definition file not found to update.", 'error')
             return
@@ -1222,6 +1237,7 @@ class Vic3Logic:
         return info
 
     def save_country_history(self, tag, gov_type, laws, ruler_info):
+        self.perform_auto_backup()
         hist_dir = os.path.join(self.mod_path, "common", "history", "countries")
         clean_tag = tag.replace("c:", "").strip()
         target_path = None
@@ -1472,6 +1488,7 @@ class Vic3Logic:
         return info
 
     def add_diplomatic_pact(self, tag, target, pact_type, category):
+        self.perform_auto_backup()
         # category: subject, rival, embargo, truce
         clean_tag = tag.replace("c:", "").strip()
         clean_target = target.replace("c:", "").strip()
@@ -1527,6 +1544,7 @@ class Vic3Logic:
         self.log(f"[DIP] Added {pact_type} with {clean_target} in {filename}", 'success')
 
     def remove_diplomatic_pact(self, tag, target, pact_type):
+        self.perform_auto_backup()
         dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
         clean_tag = tag.replace("c:", "").strip()
         clean_target = target.replace("c:", "").strip()
@@ -1596,6 +1614,7 @@ class Vic3Logic:
                 self.log(f"[DIP] Removed {pact_type} with {clean_target} from {fname}", 'success')
 
     def set_relations(self, tag, target, value):
+        self.perform_auto_backup()
         dip_dir = os.path.join(self.mod_path, "common", "history", "diplomacy")
         os.makedirs(dip_dir, exist_ok=True)
         fpath = os.path.join(dip_dir, "00_relations.txt")
@@ -1634,6 +1653,180 @@ class Vic3Logic:
 
         with open(fpath, 'w', encoding='utf-8-sig') as f: f.write(content)
         self.log(f"[DIP] Relations set to {value} with {clean_target}", 'success')
+
+    # --- MOD MANAGER LOGIC ---
+    def copy_tree_content(self, src, dst):
+        """Recursively copies content of src folder to dst folder."""
+        if not os.path.exists(src):
+            self.log(f"[WARN] Source path does not exist: {src}", 'warn')
+            return
+        os.makedirs(dst, exist_ok=True)
+        for item in os.listdir(src):
+            s = os.path.join(src, item)
+            d = os.path.join(dst, item)
+            if os.path.isdir(s):
+                if not os.path.exists(d): os.makedirs(d)
+                self.copy_tree_content(s, d)
+            else:
+                shutil.copy2(s, d)
+
+    def create_new_mod(self, name, location):
+        if not name or not location:
+            self.log("[ERROR] Mod name and location required.", 'error')
+            return False
+
+        mod_root = os.path.join(location, name)
+        if os.path.exists(mod_root):
+            self.log(f"[ERROR] Directory already exists: {mod_root}", 'error')
+            return False
+
+        try:
+            os.makedirs(mod_root)
+            meta_dir = os.path.join(mod_root, ".metadata")
+            os.makedirs(meta_dir)
+
+            metadata = {
+                "name" : name,
+                "id" : "",
+                "version" : "",
+                "supported_game_version" : "",
+                "short_description" : "",
+                "tags" : [],
+                "relationships" : [],
+                "game_custom_data" : {
+                    "multiplayer_synchronized" : True
+                }
+            }
+
+            with open(os.path.join(meta_dir, "metadata.json"), 'w') as f:
+                json.dump(metadata, f, indent=4)
+
+            self.log(f"[SUCCESS] Created new mod structure at {mod_root}", 'success')
+
+            self.set_mod_path(mod_root)
+            return True
+
+        except Exception as e:
+            self.log(f"[ERROR] Failed to create mod: {e}", 'error')
+            traceback.print_exc()
+            return False
+
+    def copy_vanilla_files(self, vanilla_path, mod_path):
+        """Copies the list of necessary default files and folders from vanilla."""
+        if not vanilla_path or not os.path.exists(vanilla_path):
+            self.log("[ERROR] Vanilla path invalid or not set.", 'error')
+            return
+
+        # Handle 'game' subdirectory if user selected root install folder
+        game_dir = os.path.join(vanilla_path, "game")
+        if os.path.exists(game_dir):
+            base_src = game_dir
+        else:
+            base_src = vanilla_path
+
+        # List of items to copy. Tuple: (path, is_recursive)
+        # Note: localization/English/countries_l_english -> localization/english/countries_l_english.yml
+        # Note: common/character_templates* -> is_recursive=True
+
+        items = [
+            ("localization/english/countries_l_english.yml", False),
+            ("common/character_templates", True),
+            ("common/coat_of_arms", True),
+            ("common/country_definitions", True),
+            ("common/cultures", True),
+            ("common/strategic_regions", True),
+            ("common/history/buildings", True),
+            ("common/history/characters", True),
+            ("common/history/countries", True),
+            ("common/history/diplomacy", True),
+            ("common/history/military_formations", True),
+            ("common/history/pops", True),
+            ("common/history/population", True),
+            ("common/history/states", True),
+            ("common/history/trade", True)
+        ]
+
+        copied_count = 0
+        for rel_path, recursive in items:
+            # Handle potential case sensitivity or slight path variations manually if needed
+            # Assuming standard structure here.
+            src = os.path.join(base_src, rel_path)
+            dst = os.path.join(mod_path, rel_path)
+
+            if not os.path.exists(src):
+                # Try lower case for English path if failed
+                if "English" in rel_path or "english" in rel_path:
+                    alt_path = rel_path.replace("English", "english")
+                    src = os.path.join(base_src, alt_path)
+
+            if not os.path.exists(src):
+                self.log(f"[WARN] Skipped missing vanilla path: {rel_path}", 'warn')
+                continue
+
+            try:
+                if recursive:
+                    if os.path.isdir(src):
+                        self.copy_tree_content(src, dst)
+                        copied_count += 1
+                    else:
+                        self.log(f"[WARN] Expected folder but found file: {rel_path}", 'warn')
+                else:
+                    # File copy
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+                    copied_count += 1
+            except Exception as e:
+                self.log(f"[ERROR] Failed to copy {rel_path}: {e}", 'error')
+
+        self.log(f"[SUCCESS] Copied {copied_count} items from vanilla.", 'success')
+
+    def backup_mod(self, mod_path):
+        """Creates a numbered backup of the current mod."""
+        if not mod_path or not os.path.exists(mod_path):
+            self.log("[ERROR] Current mod path invalid.", 'error')
+            return
+
+        parent_dir = os.path.dirname(mod_path)
+        mod_dirname = os.path.basename(mod_path)
+
+        # Scan for existing backups
+        idx = 1
+        while True:
+            backup_name = f"{mod_dirname}_backup_{idx}"
+            backup_path = os.path.join(parent_dir, backup_name)
+            if not os.path.exists(backup_path):
+                break
+            idx += 1
+
+        target_backup_path = os.path.join(parent_dir, f"{mod_dirname}_backup_{idx}")
+
+        try:
+            self.log(f"[BACKUP] Creating backup at {target_backup_path}...", 'info')
+            shutil.copytree(mod_path, target_backup_path)
+            self.log(f"[SUCCESS] Backup created: {os.path.basename(target_backup_path)}", 'success')
+        except Exception as e:
+            self.log(f"[ERROR] Backup failed: {e}", 'error')
+
+    def perform_auto_backup(self):
+        """Creates or overwrites the auto-backup folder if enabled."""
+        if not self.auto_backup_enabled or not self.mod_path or not os.path.exists(self.mod_path):
+            return
+
+        parent_dir = os.path.dirname(self.mod_path)
+        mod_dirname = os.path.basename(self.mod_path)
+        backup_name = f"{mod_dirname}_autobackup"
+        backup_path = os.path.join(parent_dir, backup_name)
+
+        try:
+            # We want to replace contents. efficient way: rmtree then copytree
+            # Or copytree with dirs_exist_ok=True (Python 3.8+)
+            if os.path.exists(backup_path):
+                shutil.rmtree(backup_path)
+
+            shutil.copytree(self.mod_path, backup_path)
+            self.log(f"[AUTO-BACKUP] Updated {backup_name}", 'success')
+        except Exception as e:
+            self.log(f"[ERROR] Auto-backup failed: {e}", 'error')
 
 # =============================================================================
 #  GUI IMPLEMENTATION
@@ -1692,29 +1885,62 @@ class App(tk.Tk):
                         self.path_var.set(path)
                         self.logic.set_mod_path(path)
                         self.log_message(f"Loaded Mod Path: {path}")
+
+                    v_path = data.get("vanilla_path", "")
+                    if os.path.exists(v_path):
+                        self.vanilla_path_var.set(v_path)
+                        self.logic.set_vanilla_path(v_path)
+                        self.log_message(f"Loaded Vanilla Path: {v_path}")
         except: pass
 
     def save_config(self):
         try:
             with open("config.json", "w") as f:
-                json.dump({"mod_path": self.path_var.get()}, f)
+                json.dump({
+                    "mod_path": self.path_var.get(),
+                    "vanilla_path": self.vanilla_path_var.get()
+                }, f)
         except: pass
 
     def _build_ui(self):
         main_frame = ttk.Frame(self, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 1. Mod Path
-        path_frame = ttk.LabelFrame(main_frame, text="Global Configuration", padding=15)
+        # 1. Mod Path with Custom Header
+        # We create a custom frame to serve as the labelwidget, containing Title + Buttons
+        title_frame = ttk.Frame(main_frame)
+
+        # Title
+        ttk.Label(title_frame, text="Global Configuration", foreground="#00ACC1", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+
+        # Spacer (pushes everything else to the right)
+        ttk.Frame(title_frame).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Buttons in the title bar - Packed to RIGHT to align them to the far right
+        # Order: Auto-backup (rightmost? No, usually order is inverted for RIGHT pack, or we pack a frame to the right and pack left inside it)
+        # Let's pack them RIGHT. First packed is rightmost.
+
+        self.autobackup_var = tk.BooleanVar(value=self.logic.auto_backup_enabled)
+        ttk.Checkbutton(title_frame, text="Auto-backup", variable=self.autobackup_var, command=self.toggle_auto_backup).pack(side=tk.RIGHT, padx=5)
+
+        ttk.Button(title_frame, text="Backup Current Mod", command=self.start_backup).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(title_frame, text="Mod Manager", command=self.show_mod_manager_ui).pack(side=tk.RIGHT, padx=5)
+
+        # Main LabelFrame using the custom title frame
+        path_frame = ttk.LabelFrame(main_frame, labelwidget=title_frame, padding=15)
         path_frame.pack(fill=tk.X, pady=(0, 10))
+
         self.path_var = tk.StringVar()
         ttk.Label(path_frame, text="Mod Directory:").pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Entry(path_frame, textvariable=self.path_var, width=60).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Entry(path_frame, textvariable=self.path_var).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(path_frame, text="Browse...", command=self.browse_folder).pack(side=tk.LEFT, padx=5)
+
+        self.vanilla_path_var = tk.StringVar() # Initialize but don't show
 
         # 2. Navigation
         nav_frame = ttk.Frame(main_frame)
         nav_frame.pack(fill=tk.X, pady=(0, 10))
+        # Mod Manager button moved to header
         ttk.Button(nav_frame, text="Transfer States", command=self.show_transfer_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Country", command=self.show_create_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(nav_frame, text="Create Army", command=self.show_army_ui).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
@@ -1746,6 +1972,103 @@ class App(tk.Tk):
     def clear_content(self):
         for widget in self.content_frame.winfo_children():
             widget.destroy()
+
+    # --- MODE 0: MOD MANAGER ---
+    def show_mod_manager_ui(self):
+        self.clear_content()
+        self.mode = "MOD_MANAGER"
+        f = ttk.LabelFrame(self.content_frame, text="Mod Manager", padding=15)
+        f.pack(fill=tk.BOTH, expand=True)
+
+        # 1. New Mod
+        new_frame = ttk.LabelFrame(f, text="Create New Mod", padding=10)
+        new_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(new_frame, text="Mod Name:").pack(side=tk.LEFT, padx=5)
+        self.mm_name = tk.StringVar()
+        ttk.Entry(new_frame, textvariable=self.mm_name, width=20).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(new_frame, text="Location (Parent Folder):").pack(side=tk.LEFT, padx=5)
+        self.mm_loc = tk.StringVar()
+        # Default to standard paradox mod path if possible or current mod's parent
+        if self.path_var.get():
+             self.mm_loc.set(os.path.dirname(self.path_var.get()))
+
+        ttk.Entry(new_frame, textvariable=self.mm_loc, width=30).pack(side=tk.LEFT, padx=5)
+        ttk.Button(new_frame, text="Browse...", command=self.browse_mod_parent).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(new_frame, text="Create Mod", command=self.start_create_mod).pack(side=tk.RIGHT, padx=5)
+
+        # 2. Tools - Removed per user request (Auto-copy is integrated into Create Mod)
+        # Backup controls moved to header
+
+        self.run_btn.config(text="Ready", state='disabled')
+
+    def browse_mod_parent(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.mm_loc.set(folder)
+
+    def ensure_vanilla_path(self):
+        path = self.vanilla_path_var.get()
+        if path and os.path.exists(path):
+            return path
+
+        messagebox.showinfo("Setup", r"Select the victoria 3/game folder, e.g: C:\Program Files (x86)\Steam\steamapps\common\Victoria 3\game")
+        folder = filedialog.askdirectory(title="Select Vanilla Game Directory")
+        if folder:
+            self.vanilla_path_var.set(folder)
+            self.logic.set_vanilla_path(folder)
+            self.save_config()
+            self.log_message(f"Selected Vanilla Path: {folder}")
+            return folder
+        return None
+
+    def start_create_mod(self):
+        name = self.mm_name.get().strip()
+        loc = self.mm_loc.get().strip()
+        if not name or not loc:
+            messagebox.showerror("Error", "Name and Location required.")
+            return
+
+        if self.logic.create_new_mod(name, loc):
+            mod_path = os.path.join(loc, name)
+            self.path_var.set(mod_path)
+            self.save_config()
+
+            # Ask if user wants to copy vanilla files now
+            if messagebox.askyesno("Setup", "Copy vanilla files to new mod now?"):
+                 v_path = self.ensure_vanilla_path()
+                 if v_path:
+                    self.log_message("Starting file copy...", 'info')
+                    threading.Thread(target=self.logic.copy_vanilla_files, args=(v_path, mod_path), daemon=True).start()
+
+            messagebox.showinfo("Success", f"Mod '{name}' created and loaded.")
+
+    def start_copy_vanilla(self):
+        mod_path = self.path_var.get()
+        if not mod_path:
+             messagebox.showerror("Error", "Mod path not selected.")
+             return
+
+        v_path = self.ensure_vanilla_path()
+        if not v_path: return
+
+        if messagebox.askyesno("Confirm", "Copy vanilla files to current mod? This may overwrite existing files."):
+            self.log_message("Starting file copy...", 'info')
+            # Run in thread to avoid freezing UI
+            threading.Thread(target=self.logic.copy_vanilla_files, args=(v_path, mod_path), daemon=True).start()
+
+    def start_backup(self):
+        mod_path = self.path_var.get()
+        if not mod_path:
+             messagebox.showerror("Error", "Mod path not selected.")
+             return
+        self.logic.backup_mod(mod_path)
+
+    def toggle_auto_backup(self):
+        self.logic.auto_backup_enabled = self.autobackup_var.get()
+        self.log_message(f"Auto-backup {'enabled' if self.logic.auto_backup_enabled else 'disabled'}.", 'info')
 
     # --- MODE 1: TRANSFER STATES ---
     def show_transfer_ui(self):
@@ -2303,6 +2626,14 @@ class App(tk.Tk):
             self.logic.set_mod_path(folder)
             self.save_config()
             self.log_message(f"Selected Mod Path: {folder}")
+
+    def browse_vanilla_folder(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.vanilla_path_var.set(folder)
+            self.logic.set_vanilla_path(folder)
+            self.save_config()
+            self.log_message(f"Selected Vanilla Path: {folder}")
 
     def log_message(self, message, level='info'):
         self.log_queue.put((message, level))
