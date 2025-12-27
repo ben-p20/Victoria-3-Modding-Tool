@@ -2814,7 +2814,7 @@ class Vic3Logic:
         # 1. Script File
         je_dir = os.path.join(self.mod_path, "common", "journal_entries")
         os.makedirs(je_dir, exist_ok=True)
-        target_file = os.path.join(je_dir, f"{mod_name}.txt")
+        target_file = os.path.join(je_dir, f"{mod_name}_journals.txt")
 
         # Construct content
         je_id = entry_data['id']
@@ -2836,7 +2836,7 @@ class Vic3Logic:
 
         entry_content = f"""
 {je_id} = {{
-\tgroup = journal_entry_diplomacy
+\tgroup = je_group_objectives
 \ticon = "gfx/interface/icons/event_icons/event_default.dds"
 \tcan_revolution_inherit = yes
 
@@ -2864,7 +2864,7 @@ class Vic3Logic:
         # 2. Localization
         loc_dir = os.path.join(self.mod_path, "localization", "english")
         os.makedirs(loc_dir, exist_ok=True)
-        loc_file = os.path.join(loc_dir, f"{mod_name}_l_english.yml")
+        loc_file = os.path.join(loc_dir, f"{mod_name}_journals_l_english.yml")
 
         if not os.path.exists(loc_file):
              with open(loc_file, 'w', encoding='utf-8-sig') as f: f.write("l_english:\n")
@@ -4660,7 +4660,7 @@ class App(tk.Tk):
         ttk.Button(rew_ctrl, text="-", width=3, command=lambda: self.remove_je_item("reward")).pack(side=tk.LEFT)
 
         # Populate Options
-        self.je_act_opts = ["Is Country (Tag)", "Has Technology", "Has Law", "Is Great Power", "Is At War", "GDP Check"]
+        self.je_act_opts = ["Is Country (Tag)", "Primary Culture", "Has Technology", "Has Law", "Is Great Power", "Is At War", "GDP Check"]
         self.je_comp_opts = ["Own State Region", "Building Count", "Literacy Rate", "Gold Reserves", "Battalion Count"]
         self.je_rew_opts = ["Add Treasury", "Add Prestige", "Add Loyalists", "Add Radicals", "Trigger Event", "Add Modifier"]
 
@@ -4683,7 +4683,12 @@ class App(tk.Tk):
             if sel_type == "Is Country (Tag)":
                 tags = self.logic.scan_all_tags()
                 val = self.ask_popup_input("Select Tag", tags)
-                if val: val = f"tag = {val.upper()}"
+                if val: val = f"c:{val.upper()} = THIS"
+            elif sel_type == "Primary Culture":
+                c_opts, _, _, _, _, _ = self.logic.scan_culture_definitions()
+                all_culs = sorted(list(c_opts.keys()))
+                val = self.ask_popup_input("Select Culture", all_culs)
+                if val: val = f"country_has_primary_culture = cu:{val}"
             elif sel_type == "Has Technology":
                 techs = self.logic.scan_technologies()
                 val = self.ask_popup_input("Select Technology", techs)
@@ -4724,7 +4729,7 @@ class App(tk.Tk):
                 if num: val = f"gold_reserves >= {num}"
             elif sel_type == "Battalion Count":
                 num = simpledialog.askinteger("Input", "Count:")
-                if num: val = f"battalions_total >= {num}"
+                if num: val = f"army_size >= {num}"
 
         elif list_type == "reward":
             sel_type = self.je_rew_type.get()

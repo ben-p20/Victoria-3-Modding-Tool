@@ -33,22 +33,22 @@ class TestVic3Logic(unittest.TestCase):
             "id": "je_test",
             "title": "Test Entry",
             "desc": "This is a test.",
-            "activation": ["tag = SWE", "is_at_war = yes"],
-            "completion": ["battalions_total >= 10"],
+            "activation": ["c:SWE = THIS", "is_at_war = yes"],
+            "completion": ["army_size >= 10"],
             "rewards": ["add_prestige = 100"]
         }
         self.logic.save_journal_entry(entry_data)
 
-        script_path = os.path.join(self.test_dir, "common/journal_entries/test_env.txt")
+        script_path = os.path.join(self.test_dir, "common/journal_entries/test_env_journals.txt")
         with open(script_path, "r") as f:
             content = f.read()
             # Verify the new group and safety flag are added
-            self.assertIn("group = journal_entry_diplomacy", content)
+            self.assertIn("group = je_group_objectives", content)
             self.assertIn("can_revolution_inherit = yes", content)
 
             # Verify original content
-            self.assertIn("tag = SWE", content)
-            self.assertIn("battalions_total >= 10", content)
+            self.assertIn("c:SWE = THIS", content)
+            self.assertIn("army_size >= 10", content)
 
 if __name__ == "__main__":
     unittest.main()
