@@ -2807,6 +2807,52 @@ class Vic3Logic:
     def scan_all_tags(self):
         return self._scan_folder_for_keys("common/country_definitions", r"^\s*([A-Z][A-Z0-9_]{1,4})\s*=\s*\{")
 
+    def add_journal_entry_to_history(self, tag, je_id):
+        """Adds a journal entry to the country's history file."""
+        self.perform_auto_backup()
+        hist_dir = os.path.join(self.mod_path, "common", "history", "countries")
+        clean_tag = tag.replace("c:", "").strip()
+
+        target_path = None
+        target_content = None
+
+        if not os.path.exists(hist_dir):
+            return # Can't add if directory doesn't exist (or empty mod)
+
+        for root, _, files in os.walk(hist_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                # Look for c:TAG block
+                if re.search(r"c:" + re.escape(clean_tag) + r"\b", content):
+                    target_path = path; target_content = content; break
+            if target_path: break
+
+        if not target_path:
+            self.log(f"[WARN] No history file found for {clean_tag}. Journal entry not added to history.", 'warn')
+            return
+
+        # Check if already present
+        if f"type = {je_id}" in target_content:
+            return # Already there
+
+        s, e = self.get_block_range_safe(target_content, f"c:{clean_tag}")
+        if s is not None:
+            block = target_content[s:e]
+            # Insert before closing brace
+            new_line = f"\n\t\tadd_journal_entry = {{ type = {je_id} }}"
+            new_block = block[:block.rfind('}')] + new_line + "\n\t}"
+
+            new_content = target_content[:s] + new_block + target_content[e:]
+
+            with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(new_content)
+            self.log(f"[HISTORY] Added {je_id} to {os.path.basename(target_path)}", 'success')
+
     def save_journal_entry(self, entry_data):
         self.perform_auto_backup()
         mod_name = os.path.basename(self.mod_path)
@@ -2818,6 +2864,30 @@ class Vic3Logic:
 
         # Construct content
         je_id = entry_data['id']
+
+        # Logic to extract tag for visibility
+        visibility_block = ""
+        target_tag = None
+        for item in entry_data['activation']:
+            # Check for "this = c:TAG" or "c:TAG = THIS"
+            # We look for the tag in the activation triggers to set visibility
+            m = re.search(r"(?:this|THIS)\s*=\s*c:([A-Za-z0-9_]+)", item, re.IGNORECASE)
+            if not m:
+                m = re.search(r"c:([A-Za-z0-9_]+)\s*=\s*(?:this|THIS)", item, re.IGNORECASE)
+
+            if m:
+                target_tag = m.group(1)
+                break
+
+        if target_tag:
+            visibility_block = f"""
+\tis_shown_when_inactive = {{
+\t\texists = c:{target_tag}
+\t\tthis = c:{target_tag}
+\t}}
+"""
+            # Also add to history file
+            self.add_journal_entry_to_history(target_tag, je_id)
 
         # Activation formatting
         possible_block = ""
@@ -2839,7 +2909,7 @@ class Vic3Logic:
 \tgroup = je_group_objectives
 \ticon = "gfx/interface/icons/event_icons/event_default.dds"
 \tcan_revolution_inherit = yes
-
+{visibility_block}
 \tpossible = {{
 {possible_block}\t}}
 
@@ -4683,7 +4753,7 @@ class App(tk.Tk):
             if sel_type == "Is Country (Tag)":
                 tags = self.logic.scan_all_tags()
                 val = self.ask_popup_input("Select Tag", tags)
-                if val: val = f"c:{val.upper()} = THIS"
+                if val: val = f"this = c:{val.upper()}"
             elif sel_type == "Primary Culture":
                 c_opts, _, _, _, _, _ = self.logic.scan_culture_definitions()
                 all_culs = sorted(list(c_opts.keys()))
