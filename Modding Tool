@@ -9,6 +9,7 @@ import sys
 import queue
 import json
 import random
+import colorsys
 
 # =============================================================================
 #  CORE LOGIC
@@ -1124,9 +1125,19 @@ class Vic3Logic:
                     _, end = self.find_block_content(content, start)
                     if end:
                         block = content[start:end]
-                        c_match = re.search(r"color\s*=\s*\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}", block)
+                        c_match = re.search(r"color\s*=\s*(hsv|rgb)?\s*\{\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\}", block, re.IGNORECASE)
                         rgb = (0,0,0)
-                        if c_match: rgb = (int(c_match.group(1)), int(c_match.group(2)), int(c_match.group(3)))
+                        if c_match:
+                            c_type = c_match.group(1)
+                            v1, v2, v3 = float(c_match.group(2)), float(c_match.group(3)), float(c_match.group(4))
+
+                            if c_type and c_type.lower() == 'hsv':
+                                h = v1 % 1.0
+                                r, g, b = colorsys.hsv_to_rgb(h, v2, v3)
+                                rgb = (int(r * 255), int(g * 255), int(b * 255))
+                            else:
+                                rgb = (int(v1), int(v2), int(v3))
+
                         cap_match = re.search(r"(capital|capital_state)\s*=\s*([A-Za-z0-9_]+)", block)
                         capital = cap_match.group(2) if cap_match else ""
                         return rgb, capital, path
