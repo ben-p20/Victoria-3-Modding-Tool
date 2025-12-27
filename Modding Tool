@@ -3135,10 +3135,17 @@ class Vic3Logic:
                             cb_inner = rs_inner[cb_s:cb_e]
 
                             b_type_m = re.search(r'building\s*=\s*"([^"]+)"', cb_inner)
+                            # Try finding 'level' first, then 'levels' (from ownership)
                             level_m = re.search(r'level\s*=\s*(\d+)', cb_inner)
+                            levels_m = re.search(r'levels\s*=\s*(\d+)', cb_inner)
 
                             b_type = b_type_m.group(1) if b_type_m else "Unknown"
-                            level = int(level_m.group(1)) if level_m else 1
+
+                            level = 1
+                            if level_m:
+                                level = int(level_m.group(1))
+                            elif levels_m:
+                                level = int(levels_m.group(1))
 
                             abs_start = s + rs_s + cb_cursor + m_cb.start()
                             abs_end = s + rs_s + cb_e
@@ -3234,8 +3241,12 @@ class Vic3Logic:
         else:
             # Update level
             block = content[s:e]
+
             if re.search(r"level\s*=\s*\d+", block):
                 new_block = re.sub(r"level\s*=\s*\d+", f"level = {new_level}", block)
+            elif re.search(r"levels\s*=\s*\d+", block):
+                # Update FIRST occurrence of levels (simple ownership support)
+                new_block = re.sub(r"levels\s*=\s*\d+", f"levels = {new_level}", block, count=1)
             else:
                 last_brace = block.rfind('}')
                 new_block = block[:last_brace] + f"\n\t\t\t\tlevel = {new_level}\n\t\t\t}}"
@@ -3357,13 +3368,13 @@ class Vic3Logic:
                 target_content = target_content[:s] + new_state_block + target_content[e:]
             else:
                 new_rs = f"""
-\t\tregion_state:{clean_tag} = {{
+\t\tregion_state:{clean_tag}={{
 {new_b_block}
 \t\t}}"""
                 new_state_block = state_block[:state_block.rfind('}')] + new_rs + "\n\t}"
                 target_content = target_content[:s] + new_state_block + target_content[e:]
         else:
-            new_entry = f"\n\ts:{clean_state} = {{\n\t\tregion_state:{clean_tag} = {{\n{new_b_block}\n\t\t}}\n\t}}"
+            new_entry = f"\n\ts:{clean_state}={{\n\t\tregion_state:{clean_tag}={{\n{new_b_block}\n\t\t}}\n\t}}"
             bs, be = self.get_block_range_safe(target_content, "BUILDINGS")
             if bs is not None:
                 target_content = target_content[:be-1] + new_entry + "\n}" + target_content[be:]
