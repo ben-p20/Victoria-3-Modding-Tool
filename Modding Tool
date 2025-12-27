@@ -2549,6 +2549,47 @@ class Vic3Logic:
                     return
 
     # --- STATE MANAGER LOGIC ---
+    def scan_state_region_owners(self, state_name):
+        """Scans history/states to find which countries own land (create_state) in the state."""
+        clean_state = self.format_state_clean(state_name)
+        if not clean_state: return []
+
+        paths = []
+        if self.mod_path: paths.append(os.path.join(self.mod_path, "common/history/states"))
+        if self.vanilla_path: paths.append(os.path.join(self.vanilla_path, "game/common/history/states"))
+
+        owners = set()
+
+        for p in paths:
+            if not os.path.exists(p): continue
+            for root, _, files in os.walk(p):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    try:
+                        with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
+
+                    s, e = self.get_block_range_safe(content, f"s:{clean_state}")
+                    if s is not None:
+                        block = content[s:e]
+                        # Find create_state blocks
+                        cursor = 0
+                        while True:
+                            m = re.search(r"create_state\s*=\s*\{", block[cursor:])
+                            if not m: break
+                            cs_s, cs_e = self.find_block_content(block, cursor + m.end() - 1)
+                            if cs_s:
+                                cs_inner = block[cs_s:cs_e]
+                                c_match = re.search(r"country\s*=\s*c:([A-Za-z0-9_]+)", cs_inner)
+                                if c_match:
+                                    owners.add(c_match.group(1))
+                                cursor = cs_e
+                            else:
+                                cursor += 1
+                        return sorted(list(owners))
+        return sorted(list(owners))
+
     def get_state_homelands(self, state_name):
         """Scans history/states for add_homeland lines."""
         # Check mod first, then vanilla
@@ -3256,11 +3297,12 @@ class Vic3Logic:
 
         with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(content)
 
-    def add_state_building(self, state_name, tag, building_type, level):
+    def add_state_building(self, state_name, land_owner_tag, building_owner_tag, building_type, level):
         """Adds a new building to a state."""
         self.perform_auto_backup()
         clean_state = self.format_state_clean(state_name)
-        clean_tag = tag.replace("c:", "").strip()
+        clean_land_owner = land_owner_tag.replace("c:", "").strip()
+        clean_building_owner = building_owner_tag.replace("c:", "").strip()
 
         fpath = None
         target_content = None
@@ -3332,12 +3374,17 @@ class Vic3Logic:
         except:
             with open(target_path, 'r', encoding='utf-8') as f: target_content = f.read()
 
+        # Construct Building Block
+        owner_line = ""
+        if clean_land_owner != clean_building_owner:
+            owner_line = f"\n\t\t\t\towner = c:{clean_building_owner}"
+
         new_b_block = f"""
 \t\t\tcreate_building = {{
 \t\t\t\tbuilding = "{building_type}"
 \t\t\t\tlevel = {level}
 \t\t\t\treserves = 1
-\t\t\t\tactivate_production_methods = {{ }}
+\t\t\t\tactivate_production_methods = {{ }}{owner_line}
 \t\t\t}}"""
 
         s, e = self.get_block_range_safe(target_content, f"s:{clean_state}")
@@ -3356,7 +3403,7 @@ class Vic3Logic:
                 curr_tag = m_rs.group(1)
                 rs_s, rs_e = self.find_block_content(state_block, rs_cursor + m_rs.end() - 1)
 
-                if curr_tag == clean_tag:
+                if curr_tag == clean_land_owner:
                     found_rs = True
                     rs_insert_idx = rs_e - 1
                     break
@@ -3368,13 +3415,13 @@ class Vic3Logic:
                 target_content = target_content[:s] + new_state_block + target_content[e:]
             else:
                 new_rs = f"""
-\t\tregion_state:{clean_tag}={{
+\t\tregion_state:{clean_land_owner}={{
 {new_b_block}
 \t\t}}"""
                 new_state_block = state_block[:state_block.rfind('}')] + new_rs + "\n\t}"
                 target_content = target_content[:s] + new_state_block + target_content[e:]
         else:
-            new_entry = f"\n\ts:{clean_state}={{\n\t\tregion_state:{clean_tag}={{\n{new_b_block}\n\t\t}}\n\t}}"
+            new_entry = f"\n\ts:{clean_state}={{\n\t\tregion_state:{clean_land_owner}={{\n{new_b_block}\n\t\t}}\n\t}}"
             bs, be = self.get_block_range_safe(target_content, "BUILDINGS")
             if bs is not None:
                 target_content = target_content[:be-1] + new_entry + "\n}" + target_content[be:]
@@ -3382,7 +3429,7 @@ class Vic3Logic:
                 target_content += f"\nBUILDINGS = {{{new_entry}\n}}"
 
         with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(target_content)
-        self.log(f"[BUILDING] Added {building_type} to {clean_state}", 'success')
+        self.log(f"[BUILDING] Added {building_type} to {clean_state} (Land: {clean_land_owner}, Owner: {clean_building_owner})", 'success')
 
 # =============================================================================
 #  GUI IMPLEMENTATION
@@ -3468,8 +3515,35 @@ class App(tk.Tk):
                 }, f)
         except: pass
 
+    def _on_canvas_configure(self, event):
+        self.canvas.itemconfig(self.canvas.find_withtag("all")[0], width=event.width)
+
     def _build_ui(self):
-        main_frame = ttk.Frame(self, padding=15)
+        # Root container
+        root_frame = ttk.Frame(self)
+        root_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Canvas & Scrollbar
+        self.canvas = tk.Canvas(root_frame, highlightthickness=0, bg="#212121")
+        self.scrollbar = ttk.Scrollbar(root_frame, orient="vertical", command=self.canvas.yview)
+
+        # Scrollable Frame
+        self.scrollable_frame = ttk.Frame(self.canvas)
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        self.canvas.bind('<Configure>', self._on_canvas_configure)
+
+        # Main Content
+        main_frame = ttk.Frame(self.scrollable_frame, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # 1. Mod Path with Custom Header
@@ -4113,7 +4187,9 @@ class App(tk.Tk):
             self.mc_rgb = list(rgb)
             self.mc_color_prev.config(bg=self._rgb_to_hex(rgb))
         if cap:
-            self.mc_capital.set(cap)
+            # strip STATE_ and lower
+            clean_cap_display = cap.replace("STATE_", "").lower()
+            self.mc_capital.set(clean_cap_display)
 
         # History
         hist = self.logic.load_country_history_details(tag)
@@ -5445,6 +5521,15 @@ class App(tk.Tk):
         b_ctrl = ttk.Frame(b_frame)
         b_ctrl.pack(side=tk.LEFT, fill=tk.Y)
 
+        ttk.Label(b_ctrl, text="Region Owner (Land):").pack(pady=(2,0))
+        self.sm_land_owner = tk.StringVar()
+        self.cb_land_owner = ttk.Combobox(b_ctrl, textvariable=self.sm_land_owner, width=15, state="readonly")
+        self.cb_land_owner.pack(pady=2)
+
+        ttk.Label(b_ctrl, text="Building Owner Tag:").pack(pady=(2,0))
+        self.sm_building_owner = tk.StringVar()
+        ttk.Entry(b_ctrl, textvariable=self.sm_building_owner, width=15).pack(pady=2)
+
         self.sm_building_add = tk.StringVar()
         self.cb_building_add = ttk.Combobox(b_ctrl, textvariable=self.sm_building_add, width=15, state="readonly")
         self.cb_building_add.pack(pady=2)
@@ -5530,6 +5615,14 @@ class App(tk.Tk):
         self.current_state_buildings = buildings
         self.refresh_buildings_list()
 
+        # Land Owners (for new building dropdown)
+        land_owners = self.logic.scan_state_region_owners(state)
+        self.cb_land_owner['values'] = land_owners
+        if land_owners:
+            self.cb_land_owner.current(0)
+            # Default building owner to land owner
+            self.sm_building_owner.set(land_owners[0])
+
         # Pops
         pops = self.logic.get_state_pops(state)
         self.current_state_pops = pops
@@ -5614,32 +5707,22 @@ class App(tk.Tk):
         state = self.sm_state_name.get().strip()
         if not state: return messagebox.showerror("Error", "Load a state first.")
 
+        land_owner = self.sm_land_owner.get().strip()
+        building_owner = self.sm_building_owner.get().strip()
         b_type = self.sm_building_add.get().strip()
-        if not b_type: return
+
+        if not land_owner: return messagebox.showerror("Error", "Select Region Land Owner.")
+        if not building_owner: return messagebox.showerror("Error", "Enter Building Owner Tag.")
+        if not b_type: return messagebox.showerror("Error", "Select Building Type.")
 
         try:
             lvl = int(self.sm_building_level.get())
         except: return messagebox.showerror("Error", "Level must be integer.")
 
-        # Need owner. Default to first owner found in state?
-        # Or maybe the currently selected building's owner?
-        # Or simple input dialog?
-        # User prompt didn't specify how to select owner for NEW building.
-        # "drop down menu showing all building types... and set its level."
-        # Usually buildings are added to a specific tag's region_state.
-        # Let's prompt for tag, defaulting to the first tag seen in current buildings or pops.
+        clean_land_owner = self.logic.format_tag_clean(land_owner)
+        clean_building_owner = self.logic.format_tag_clean(building_owner)
 
-        default_tag = ""
-        if self.current_state_buildings:
-            default_tag = self.current_state_buildings[0]['owner']
-        elif self.current_state_pops:
-            default_tag = self.current_state_pops[0]['region_tag']
-
-        owner = simpledialog.askstring("Input", "Owner Tag (e.g. FRA):", initialvalue=default_tag)
-        if not owner: return
-
-        clean_owner = self.logic.format_tag_clean(owner)
-        self.logic.add_state_building(state, clean_owner, b_type, lvl)
+        self.logic.add_state_building(state, clean_land_owner, clean_building_owner, b_type, lvl)
         self.load_state_manager_data() # Refresh
 
     def remove_state_building_ui(self):
