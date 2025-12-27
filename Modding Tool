@@ -226,6 +226,101 @@ class Vic3Logic:
             return "\n\t\t".join(effects)
         return None
 
+    def get_pop_history_settings(self, tag):
+        """Scans history/population for wealth and literacy settings dictionary."""
+        clean_tag = tag.replace("c:", "").strip()
+        settings = {"wealth": "", "literacy": ""}
+
+        paths = []
+        if self.mod_path: paths.append(os.path.join(self.mod_path, "common/history/population"))
+        if self.vanilla_path: paths.append(os.path.join(self.vanilla_path, "game/common/history/population"))
+
+        for p in paths:
+             if not os.path.exists(p): continue
+             for root, _, files in os.walk(p):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    path = os.path.join(root, file)
+                    try:
+                        with open(path, 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                        with open(path, 'r', encoding='utf-8') as f: content = f.read()
+
+                    current_idx = 0
+                    while True:
+                        s, e = self.get_block_range_safe(content, f"c:{clean_tag}", current_idx)
+                        if s is None: break
+
+                        block = content[s:e]
+
+                        w_match = re.search(r"(effect_starting_pop_wealth_[a-z_]+)\s*=\s*yes", block)
+                        if w_match: settings["wealth"] = w_match.group(1)
+
+                        l_match = re.search(r"(effect_starting_pop_literacy_[a-z_]+)\s*=\s*yes", block)
+                        if l_match: settings["literacy"] = l_match.group(1)
+
+                        current_idx = e
+
+        return settings
+
+    def save_pop_history_settings(self, tag, wealth, literacy):
+        self.perform_auto_backup()
+        clean_tag = tag.replace("c:", "").strip()
+        pop_dir = os.path.join(self.mod_path, "common/history/population")
+        os.makedirs(pop_dir, exist_ok=True)
+
+        target_file = None
+        target_content = None
+
+        # 1. Find existing file in mod
+        for root, _, files in os.walk(pop_dir):
+            for file in files:
+                if not file.endswith(".txt"): continue
+                path = os.path.join(root, file)
+                try:
+                    with open(path, 'r', encoding='utf-8-sig') as f: c = f.read()
+                except:
+                    with open(path, 'r', encoding='utf-8') as f: c = f.read()
+
+                if re.search(r"c:" + re.escape(clean_tag) + r"\b", c):
+                    target_file = path
+                    target_content = c
+                    break
+            if target_file: break
+
+        # 2. If not found, create new file
+        if not target_file:
+            # Check if name is known for cleaner filename
+            # But prompt says: "find the file named 'tur - ottoman empire.txt' ... If the tag doesnt have a file ... simply create one"
+            # We will name it "tag.txt" or try to find name
+            target_file = os.path.join(pop_dir, f"{clean_tag}.txt")
+            target_content = f"POPULATION = {{\n\tc:{clean_tag} ?= {{\n\t}}\n}}"
+            if os.path.exists(target_file):
+                 with open(target_file, 'r', encoding='utf-8-sig') as f: target_content = f.read()
+
+        # 3. Edit content
+        s, e = self.get_block_range_safe(target_content, f"c:{clean_tag}")
+        if s is not None:
+            block = target_content[s:e]
+
+            # Remove existing lines
+            block = re.sub(r"\s*effect_starting_pop_wealth_[a-z_]+\s*=\s*yes", "", block)
+            block = re.sub(r"\s*effect_starting_pop_literacy_[a-z_]+\s*=\s*yes", "", block)
+
+            # Add new
+            additions = ""
+            if wealth: additions += f"\n\t\t{wealth} = yes"
+            if literacy: additions += f"\n\t\t{literacy} = yes"
+
+            # Insert
+            last_brace = block.rfind('}')
+            new_block = block[:last_brace] + additions + "\n\t}"
+
+            target_content = target_content[:s] + new_block + target_content[e:]
+
+            with open(target_file, 'w', encoding='utf-8-sig') as f: f.write(target_content)
+            self.log(f"[SAVE] Pop settings saved to {os.path.basename(target_file)}", 'success')
+
     def get_extended_history_data(self, tag):
         """Scans history/countries for extended data (tech, laws, politics, institutions)."""
         hist_dir = os.path.join(self.mod_path, "common/history/countries")
@@ -312,7 +407,7 @@ class Vic3Logic:
                 closest_name = name
         return closest_name
 
-    def create_country_files(self, tag, name, adjective, capital, gov_type, color_rgb, cultures_list, religion, tier, country_type, old_tag):
+    def create_country_files(self, tag, name, adjective, capital, gov_type, color_rgb, cultures_list, religion, tier, country_type, old_tag, wealth=None, literacy=None):
         self.perform_auto_backup()
         self.log(f"[GEN] Creating core files for {tag} ({name})...")
         r_i, g_i, b_i = int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2])
@@ -418,9 +513,23 @@ class Vic3Logic:
         os.makedirs(pop_dir, exist_ok=True)
         pop_file = os.path.join(pop_dir, f"{tag} - {name}.txt")
 
-        pop_effects = self.get_pop_history_data(old_tag)
-        if not pop_effects:
-             pop_effects = "effect_starting_pop_wealth_medium = yes\n\t\teffect_starting_pop_literacy_medium = yes"
+        if wealth or literacy:
+            # Use provided settings
+            pop_effects = ""
+            if wealth: pop_effects += f"{wealth} = yes"
+            if literacy:
+                if pop_effects: pop_effects += "\n\t\t"
+                pop_effects += f"{literacy} = yes"
+
+            # Use defaults if one is missing but other is provided?
+            # Or just use what is given.
+            if not pop_effects: # Should not happen if wealth or literacy is true
+                 pop_effects = "effect_starting_pop_wealth_medium = yes\n\t\teffect_starting_pop_literacy_medium = yes"
+        else:
+            # Fallback to copy from old tag
+            pop_effects = self.get_pop_history_data(old_tag)
+            if not pop_effects:
+                 pop_effects = "effect_starting_pop_wealth_medium = yes\n\t\teffect_starting_pop_literacy_medium = yes"
 
         pop_content = f"""POPULATION = {{
     c:{tag} = {{
@@ -3334,6 +3443,32 @@ class App(tk.Tk):
         self.cr_others = tk.Text(f, height=3, width=40, bg="#424242", fg="#ECEFF1", insertbackground="white", relief="flat")
         self.cr_others.grid(row=6, column=1, columnspan=3, sticky=tk.W, pady=5)
 
+        # Row 7: Population Settings
+        pop_frame = ttk.LabelFrame(f, text="Population Settings (Defaults to old tag's by default)", padding=5)
+        pop_frame.grid(row=7, column=0, columnspan=4, sticky=tk.NSEW, pady=5)
+
+        ttk.Label(pop_frame, text="Starting Wealth:").grid(row=0, column=0, sticky=tk.W)
+        self.cr_pop_wealth = tk.StringVar()
+        w_opts = [
+            "effect_starting_pop_wealth_low",
+            "effect_starting_pop_wealth_medium",
+            "effect_starting_pop_wealth_high",
+            "effect_starting_pop_wealth_very_high"
+        ]
+        ttk.Combobox(pop_frame, textvariable=self.cr_pop_wealth, values=w_opts, state="readonly", width=35).grid(row=0, column=1, sticky=tk.W, padx=5)
+
+        ttk.Label(pop_frame, text="Starting Literacy:").grid(row=0, column=2, sticky=tk.W, padx=(10,0))
+        self.cr_pop_lit = tk.StringVar()
+        l_opts = [
+            "effect_starting_pop_literacy_baseline",
+            "effect_starting_pop_literacy_very_low",
+            "effect_starting_pop_literacy_low",
+            "effect_starting_pop_literacy_middling",
+            "effect_starting_pop_literacy_high",
+            "effect_starting_pop_literacy_very_high"
+        ]
+        ttk.Combobox(pop_frame, textvariable=self.cr_pop_lit, values=l_opts, state="readonly", width=35).grid(row=0, column=3, sticky=tk.W, padx=5)
+
         self.run_btn.config(text="Create & Transfer", command=self.start_create)
 
     def toggle_annex_ui(self):
@@ -3595,6 +3730,38 @@ class App(tk.Tk):
         ideos = ["ideology_traditionalist", "ideology_slaver", "ideology_royalist", "ideology_theocrat", "ideology_liberal", "ideology_market_liberal", "ideology_protectionist", "ideology_abolitionist", "ideology_radical", "ideology_republican", "ideology_democrat", "ideology_jingoist", "ideology_pacifist", "ideology_moderate"]
         ttk.Combobox(rul_frame, textvariable=self.mc_r_ideo, values=ideos, state="readonly").grid(row=1, column=3, padx=5)
 
+        # Population Settings
+        pop_frame = ttk.LabelFrame(f, text="Population Settings", padding=5)
+        pop_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(pop_frame, text="Starting Wealth:").grid(row=0, column=0, sticky=tk.W)
+        self.mc_pop_wealth = tk.StringVar()
+        w_opts = [
+            "effect_starting_pop_wealth_low",
+            "effect_starting_pop_wealth_medium",
+            "effect_starting_pop_wealth_high",
+            "effect_starting_pop_wealth_very_high"
+        ]
+        ttk.Combobox(pop_frame, textvariable=self.mc_pop_wealth, values=w_opts, state="readonly", width=35).grid(row=0, column=1, sticky=tk.W, padx=5)
+
+        ttk.Label(pop_frame, text="Starting Literacy:").grid(row=0, column=2, sticky=tk.W, padx=(10,0))
+        self.mc_pop_lit = tk.StringVar()
+        l_opts = [
+            "effect_starting_pop_literacy_baseline",
+            "effect_starting_pop_literacy_very_low",
+            "effect_starting_pop_literacy_low",
+            "effect_starting_pop_literacy_middling",
+            "effect_starting_pop_literacy_high",
+            "effect_starting_pop_literacy_very_high"
+        ]
+        ttk.Combobox(pop_frame, textvariable=self.mc_pop_lit, values=l_opts, state="readonly", width=35).grid(row=0, column=3, sticky=tk.W, padx=5)
+
+        # Copy from tag
+        ttk.Label(pop_frame, text="Copy From Tag:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.mc_pop_copy_tag = tk.StringVar()
+        ttk.Entry(pop_frame, textvariable=self.mc_pop_copy_tag, width=10).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Button(pop_frame, text="Copy Settings", command=self.copy_pop_settings).grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
+
         self.run_btn.config(text="Save Changes", command=self.save_country_mod_changes)
 
     def load_country_mod_data(self):
@@ -3640,7 +3807,22 @@ class App(tk.Tk):
         self.mc_r_ig.set(hist["ruler"]["ig"])
         self.mc_r_ideo.set(hist["ruler"]["ideology"])
 
+        # Population
+        pop_settings = self.logic.get_pop_history_settings(tag)
+        self.mc_pop_wealth.set(pop_settings["wealth"])
+        self.mc_pop_lit.set(pop_settings["literacy"])
+
         self.log_message(f"Loaded data for {tag}", 'success')
+
+    def copy_pop_settings(self):
+        src_tag = self.logic.format_tag_clean(self.mc_pop_copy_tag.get())
+        if not src_tag: return
+
+        settings = self.logic.get_pop_history_settings(src_tag)
+        if settings["wealth"]: self.mc_pop_wealth.set(settings["wealth"])
+        if settings["literacy"]: self.mc_pop_lit.set(settings["literacy"])
+
+        self.log_message(f"Copied pop settings from {src_tag}", 'info')
 
     def save_country_mod_changes(self):
         tag = self.logic.format_tag_clean(self.mc_tag.get())
@@ -3672,6 +3854,10 @@ class App(tk.Tk):
         }
 
         self.logic.save_country_history(tag, self.mc_gov.get(), laws, ruler)
+
+        # Save Pop Settings
+        self.logic.save_pop_history_settings(tag, self.mc_pop_wealth.get(), self.mc_pop_lit.get())
+
         messagebox.showinfo("Success", "Country modifications saved.")
 
     def pick_color_mod(self):
@@ -4323,6 +4509,9 @@ class App(tk.Tk):
         cultures = self.selected_cultures
         religion = self.cr_religion.get()
 
+        pop_wealth = self.cr_pop_wealth.get()
+        pop_lit = self.cr_pop_lit.get()
+
         if not tag or not name or not old_owner: return messagebox.showerror("Error", "Tag, Name, and Old Owner are required.")
         if not is_annex and not capital: return messagebox.showerror("Error", "Capital State ID required unless Full Annexation.")
         if len(tag) != 3: return messagebox.showerror("Error", "Tag must be exactly 3 characters.")
@@ -4360,7 +4549,7 @@ class App(tk.Tk):
         self.is_processing = True
         self.run_btn.config(state='disabled')
         self.log_area.config(state='normal'); self.log_area.delete('1.0', tk.END); self.log_area.config(state='disabled')
-        threading.Thread(target=self.run_create_logic, args=(tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type), daemon=True).start()
+        threading.Thread(target=self.run_create_logic, args=(tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type, pop_wealth, pop_lit), daemon=True).start()
 
     # --- LOGIC THREADS ---
     def run_transfer_logic(self, old_tag, new_tag, is_annex, raw_states):
@@ -4384,7 +4573,7 @@ class App(tk.Tk):
             self.is_processing = False
             self.after(0, lambda: self.run_btn.config(state='normal'))
 
-    def run_create_logic(self, tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type):
+    def run_create_logic(self, tag, name, adj, old_owner, capital, others_raw, gov, rgb, is_annex, cultures, religion, tier, country_type, pop_wealth, pop_lit):
         try:
             self.log_message(f"--- Creating Country: {tag} ({name}) ---", 'info')
             if self.logic.tag_exists(tag):
@@ -4418,7 +4607,7 @@ class App(tk.Tk):
                 others = [self.logic.format_state_clean(s) for s in others_raw.split() if s.strip()]
                 all_states = [capital] + others
 
-            self.logic.create_country_files(tag, name, adj, capital, gov, rgb, cultures, religion, tier, country_type, old_owner)
+            self.logic.create_country_files(tag, name, adj, capital, gov, rgb, cultures, religion, tier, country_type, old_owner, pop_wealth, pop_lit)
             
             self.log_message("--- Transferring Land & Units ---", 'info')
             self.execute_transfer_core(all_states, old_owner, tag)
