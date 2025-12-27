@@ -30,7 +30,10 @@ class Vic3Logic:
         self.vanilla_path = path
 
     def format_tag_clean(self, user_input):
-        return user_input.upper().strip()
+        cleaned = user_input.strip()
+        if cleaned.lower().startswith("c:"):
+            cleaned = cleaned[2:]
+        return cleaned.upper()
 
     def format_state_clean(self, user_input):
         clean = user_input.upper().strip()
@@ -3072,6 +3075,315 @@ class Vic3Logic:
 
         self.log(f"[SUCCESS] Journal Entry {je_id} saved to {os.path.basename(target_file)}", 'success')
 
+    # --- BUILDING LOGIC ---
+    def scan_history_building_types(self):
+        """Scans history/buildings for all used building types."""
+        types = set()
+        paths = []
+        if self.mod_path: paths.append(os.path.join(self.mod_path, "common/history/buildings"))
+        if self.vanilla_path: paths.append(os.path.join(self.vanilla_path, "game/common/history/buildings"))
+
+        for p in paths:
+            if not os.path.exists(p): continue
+            for root, _, files in os.walk(p):
+                for file in files:
+                    if not file.endswith(".txt"): continue
+                    try:
+                         with open(os.path.join(root, file), 'r', encoding='utf-8-sig') as f: content = f.read()
+                    except:
+                         with open(os.path.join(root, file), 'r', encoding='utf-8') as f: content = f.read()
+
+                    matches = re.findall(r'building\s*=\s*"([^"]+)"', content)
+                    types.update(matches)
+        return sorted(list(types))
+
+    def _scan_file_for_buildings(self, fpath, clean_state, buildings_list, is_mod):
+        try:
+             with open(fpath, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+             with open(fpath, 'r', encoding='utf-8') as f: content = f.read()
+
+        # Search s:STATE
+        cursor = 0
+        while True:
+            s, e = self.get_block_range_safe(content, f"s:{clean_state}", cursor)
+            if s is None: break
+
+            state_block = content[s:e]
+
+            # Search region_state:TAG inside state_block
+            rs_cursor = 0
+            while True:
+                m_rs = re.search(r"region_state:([A-Za-z0-9_]+)\s*=\s*\{", state_block[rs_cursor:])
+                if not m_rs: break
+
+                tag = m_rs.group(1)
+                rs_s, rs_e = self.find_block_content(state_block, rs_cursor + m_rs.end() - 1)
+
+                if rs_s:
+                    rs_inner = state_block[rs_s:rs_e]
+
+                    # Search create_building inside region_state
+                    cb_cursor = 0
+                    while True:
+                        m_cb = re.search(r"create_building\s*=\s*\{", rs_inner[cb_cursor:])
+                        if not m_cb: break
+
+                        cb_s, cb_e = self.find_block_content(rs_inner, cb_cursor + m_cb.end() - 1)
+
+                        if cb_s:
+                            cb_inner = rs_inner[cb_s:cb_e]
+
+                            b_type_m = re.search(r'building\s*=\s*"([^"]+)"', cb_inner)
+                            # Try finding 'level' first, then 'levels' (from ownership)
+                            level_m = re.search(r'level\s*=\s*(\d+)', cb_inner)
+                            levels_m = re.search(r'levels\s*=\s*(\d+)', cb_inner)
+
+                            b_type = b_type_m.group(1) if b_type_m else "Unknown"
+
+                            level = 1
+                            if level_m:
+                                level = int(level_m.group(1))
+                            elif levels_m:
+                                level = int(levels_m.group(1))
+
+                            abs_start = s + rs_s + cb_cursor + m_cb.start()
+                            abs_end = s + rs_s + cb_e
+
+                            buildings_list.append({
+                                "file": fpath,
+                                "is_mod": is_mod,
+                                "state": clean_state,
+                                "owner": tag,
+                                "type": b_type,
+                                "level": level,
+                                "indices": {
+                                    "start": abs_start,
+                                    "end": abs_end
+                                }
+                            })
+
+                            cb_cursor = cb_e
+                        else:
+                            cb_cursor += 1
+                    rs_cursor = rs_e
+                else:
+                    rs_cursor += 1
+
+            cursor = e
+
+    def scan_state_buildings(self, state_name):
+        """Scans buildings in a specific state."""
+        clean_state = self.format_state_clean(state_name)
+        if not clean_state: return []
+
+        buildings = []
+        processed_files = set() # Relative paths in mod
+
+        # 1. Mod
+        if self.mod_path:
+            mod_b = os.path.join(self.mod_path, "common/history/buildings")
+            if os.path.exists(mod_b):
+                for root, _, files in os.walk(mod_b):
+                    for file in files:
+                        if not file.endswith(".txt"): continue
+                        fpath = os.path.join(root, file)
+                        rel = os.path.relpath(fpath, mod_b)
+                        processed_files.add(rel)
+                        self._scan_file_for_buildings(fpath, clean_state, buildings, True)
+
+        # 2. Vanilla
+        if self.vanilla_path:
+            van_b = os.path.join(self.vanilla_path, "game/common/history/buildings")
+            if os.path.exists(van_b):
+                for root, _, files in os.walk(van_b):
+                    for file in files:
+                        if not file.endswith(".txt"): continue
+                        fpath = os.path.join(root, file)
+                        rel = os.path.relpath(fpath, van_b)
+
+                        if rel in processed_files: continue
+
+                        self._scan_file_for_buildings(fpath, clean_state, buildings, False)
+
+        return buildings
+
+    def save_state_building(self, building_entry, new_level=None, delete=False):
+        """Updates or deletes a building entry."""
+        self.perform_auto_backup()
+        fpath = building_entry['file']
+        target_path = fpath
+
+        # Copy to mod if vanilla
+        if self.vanilla_path and fpath.startswith(self.vanilla_path):
+            mod_rel = os.path.relpath(fpath, os.path.join(self.vanilla_path, "game"))
+            target_path = os.path.join(self.mod_path, mod_rel)
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            if not os.path.exists(target_path):
+                shutil.copy2(fpath, target_path)
+
+        try:
+            with open(target_path, 'r', encoding='utf-8-sig') as f: content = f.read()
+        except:
+            with open(target_path, 'r', encoding='utf-8') as f: content = f.read()
+
+        s = building_entry['indices']['start']
+        e = building_entry['indices']['end']
+
+        # Verify content matches (simple check)
+        # Note: if multiple modifications happen without reload, indices might drift.
+        # But UI reloads after every save.
+
+        if delete:
+            # Remove the block
+            content = content[:s].rstrip() + content[e:]
+            self.log(f"[BUILDING] Removed {building_entry['type']} from {os.path.basename(target_path)}", 'success')
+        else:
+            # Update level
+            block = content[s:e]
+
+            if re.search(r"level\s*=\s*\d+", block):
+                new_block = re.sub(r"level\s*=\s*\d+", f"level = {new_level}", block)
+            elif re.search(r"levels\s*=\s*\d+", block):
+                # Update FIRST occurrence of levels (simple ownership support)
+                new_block = re.sub(r"levels\s*=\s*\d+", f"levels = {new_level}", block, count=1)
+            else:
+                last_brace = block.rfind('}')
+                new_block = block[:last_brace] + f"\n\t\t\t\tlevel = {new_level}\n\t\t\t}}"
+
+            content = content[:s] + new_block + content[e:]
+            self.log(f"[BUILDING] Updated {building_entry['type']} to level {new_level}", 'success')
+
+        with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(content)
+
+    def add_state_building(self, state_name, tag, building_type, level):
+        """Adds a new building to a state."""
+        self.perform_auto_backup()
+        clean_state = self.format_state_clean(state_name)
+        clean_tag = tag.replace("c:", "").strip()
+
+        fpath = None
+        target_content = None
+
+        # Check Mod First
+        if self.mod_path:
+            mod_b = os.path.join(self.mod_path, "common/history/buildings")
+            if os.path.exists(mod_b):
+                for root, _, files in os.walk(mod_b):
+                    for file in files:
+                        if not file.endswith(".txt"): continue
+                        curr_path = os.path.join(root, file)
+                        try:
+                            with open(curr_path, 'r', encoding='utf-8-sig') as f: c = f.read()
+                        except:
+                            with open(curr_path, 'r', encoding='utf-8') as f: c = f.read()
+
+                        if f"s:{clean_state}" in c:
+                            fpath = curr_path
+                            target_content = c
+                            break
+                    if fpath: break
+
+        # Check Vanilla (if not found in Mod)
+        if not fpath and self.vanilla_path:
+            van_b = os.path.join(self.vanilla_path, "game/common/history/buildings")
+            if os.path.exists(van_b):
+                for root, _, files in os.walk(van_b):
+                    for file in files:
+                        if not file.endswith(".txt"): continue
+                        curr_path = os.path.join(root, file)
+                        rel = os.path.relpath(curr_path, van_b)
+
+                        # SKIP shadowed files!
+                        if self.mod_path:
+                            shadow_path = os.path.join(self.mod_path, "common/history/buildings", rel)
+                            if os.path.exists(shadow_path): continue
+
+                        try:
+                            with open(curr_path, 'r', encoding='utf-8-sig') as f: c = f.read()
+                        except:
+                            with open(curr_path, 'r', encoding='utf-8') as f: c = f.read()
+
+                        if f"s:{clean_state}" in c:
+                            fpath = curr_path
+                            target_content = c
+                            break
+                    if fpath: break
+
+        if fpath:
+            if self.vanilla_path and fpath.startswith(self.vanilla_path):
+                mod_rel = os.path.relpath(fpath, os.path.join(self.vanilla_path, "game"))
+                target_path = os.path.join(self.mod_path, mod_rel)
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                if not os.path.exists(target_path):
+                    shutil.copy2(fpath, target_path)
+            else:
+                target_path = fpath
+        else:
+            target_path = os.path.join(self.mod_path, "common/history/buildings/99_mod_buildings.txt")
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            if not os.path.exists(target_path):
+                with open(target_path, 'w', encoding='utf-8-sig') as f: f.write("BUILDINGS = {\n}")
+            target_content = "BUILDINGS = {\n}"
+
+        # Re-read
+        try:
+            with open(target_path, 'r', encoding='utf-8-sig') as f: target_content = f.read()
+        except:
+            with open(target_path, 'r', encoding='utf-8') as f: target_content = f.read()
+
+        new_b_block = f"""
+\t\t\tcreate_building = {{
+\t\t\t\tbuilding = "{building_type}"
+\t\t\t\tlevel = {level}
+\t\t\t\treserves = 1
+\t\t\t\tactivate_production_methods = {{ }}
+\t\t\t}}"""
+
+        s, e = self.get_block_range_safe(target_content, f"s:{clean_state}")
+
+        if s is not None:
+            state_block = target_content[s:e]
+
+            rs_cursor = 0
+            found_rs = False
+            rs_insert_idx = -1
+
+            while True:
+                m_rs = re.search(r"region_state:([A-Za-z0-9_]+)\s*=\s*\{", state_block[rs_cursor:])
+                if not m_rs: break
+
+                curr_tag = m_rs.group(1)
+                rs_s, rs_e = self.find_block_content(state_block, rs_cursor + m_rs.end() - 1)
+
+                if curr_tag == clean_tag:
+                    found_rs = True
+                    rs_insert_idx = rs_e - 1
+                    break
+
+                rs_cursor = rs_e
+
+            if found_rs:
+                new_state_block = state_block[:rs_insert_idx] + new_b_block + state_block[rs_insert_idx:]
+                target_content = target_content[:s] + new_state_block + target_content[e:]
+            else:
+                new_rs = f"""
+\t\tregion_state:{clean_tag}={{
+{new_b_block}
+\t\t}}"""
+                new_state_block = state_block[:state_block.rfind('}')] + new_rs + "\n\t}"
+                target_content = target_content[:s] + new_state_block + target_content[e:]
+        else:
+            new_entry = f"\n\ts:{clean_state}={{\n\t\tregion_state:{clean_tag}={{\n{new_b_block}\n\t\t}}\n\t}}"
+            bs, be = self.get_block_range_safe(target_content, "BUILDINGS")
+            if bs is not None:
+                target_content = target_content[:be-1] + new_entry + "\n}" + target_content[be:]
+            else:
+                target_content += f"\nBUILDINGS = {{{new_entry}\n}}"
+
+        with open(target_path, 'w', encoding='utf-8-sig') as f: f.write(target_content)
+        self.log(f"[BUILDING] Added {building_type} to {clean_state}", 'success')
+
 # =============================================================================
 #  GUI IMPLEMENTATION
 # =============================================================================
@@ -5099,24 +5411,50 @@ class App(tk.Tk):
         e_st.bind("<Return>", lambda e: self.load_state_manager_data())
         ttk.Button(sel_frame, text="Load State Data", command=self.load_state_manager_data).pack(side=tk.LEFT, padx=5)
 
-        # 2. Homelands
-        h_frame = ttk.LabelFrame(f, text="Homelands", padding=10)
-        h_frame.pack(fill=tk.X, pady=5)
+        # 2. Homelands & Buildings
+        hb_container = ttk.Frame(f)
+        hb_container.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        self.lb_homelands = tk.Listbox(h_frame, height=4, bg="#424242", fg="#ECEFF1")
+        # --- Homelands (Left) ---
+        h_frame = ttk.LabelFrame(hb_container, text="Homelands", padding=10)
+        h_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        self.lb_homelands = tk.Listbox(h_frame, height=6, bg="#424242", fg="#ECEFF1")
         self.lb_homelands.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0,5))
 
         h_ctrl = ttk.Frame(h_frame)
         h_ctrl.pack(side=tk.LEFT, fill=tk.Y)
 
         self.sm_homeland_add = tk.StringVar()
-        self.cb_homeland_add = ttk.Combobox(h_ctrl, textvariable=self.sm_homeland_add, width=20)
+        self.cb_homeland_add = ttk.Combobox(h_ctrl, textvariable=self.sm_homeland_add, width=15)
         # Will populate on scan
         self.cb_homeland_add.pack(pady=2)
 
         ttk.Button(h_ctrl, text="Add", command=self.add_state_homeland).pack(fill=tk.X, pady=2)
-        ttk.Button(h_ctrl, text="Remove Selected", command=self.remove_state_homeland).pack(fill=tk.X, pady=2)
-        ttk.Button(h_ctrl, text="Save Homelands", command=self.save_state_homelands_ui).pack(fill=tk.X, pady=(10, 2))
+        ttk.Button(h_ctrl, text="Remove", command=self.remove_state_homeland).pack(fill=tk.X, pady=2)
+        ttk.Button(h_ctrl, text="Save", command=self.save_state_homelands_ui).pack(fill=tk.X, pady=(10, 2))
+
+        # --- Buildings (Right) ---
+        b_frame = ttk.LabelFrame(hb_container, text="Buildings", padding=10)
+        b_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        self.lb_buildings = tk.Listbox(b_frame, height=6, bg="#424242", fg="#ECEFF1", exportselection=False)
+        self.lb_buildings.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0,5))
+        self.lb_buildings.bind('<<ListboxSelect>>', self.on_building_select)
+
+        b_ctrl = ttk.Frame(b_frame)
+        b_ctrl.pack(side=tk.LEFT, fill=tk.Y)
+
+        self.sm_building_add = tk.StringVar()
+        self.cb_building_add = ttk.Combobox(b_ctrl, textvariable=self.sm_building_add, width=15, state="readonly")
+        self.cb_building_add.pack(pady=2)
+
+        self.sm_building_level = tk.StringVar(value="1")
+        ttk.Entry(b_ctrl, textvariable=self.sm_building_level, width=5).pack(pady=2)
+
+        ttk.Button(b_ctrl, text="Add", command=self.add_state_building_ui).pack(fill=tk.X, pady=2)
+        ttk.Button(b_ctrl, text="Remove", command=self.remove_state_building_ui).pack(fill=tk.X, pady=2)
+        ttk.Button(b_ctrl, text="Update Lvl", command=self.update_state_building_level_ui).pack(fill=tk.X, pady=2)
 
         # 3. Population
         p_frame = ttk.LabelFrame(f, text="Population", padding=10)
@@ -5170,7 +5508,11 @@ class App(tk.Tk):
         self.cb_pop_rel['values'] = sorted(list(set(r_all + def_rels)))
 
         self.current_state_homelands = []
+        self.current_state_buildings = []
         self.current_state_pops = []
+
+        # Populate building types
+        self.cb_building_add['values'] = self.logic.scan_history_building_types()
 
         self.run_btn.config(text="Reload Data", command=self.load_state_manager_data)
 
@@ -5182,6 +5524,11 @@ class App(tk.Tk):
         _, homelands = self.logic.get_state_homelands(state)
         self.current_state_homelands = homelands
         self.refresh_homelands_list()
+
+        # Buildings
+        buildings = self.logic.scan_state_buildings(state)
+        self.current_state_buildings = buildings
+        self.refresh_buildings_list()
 
         # Pops
         pops = self.logic.get_state_pops(state)
@@ -5248,6 +5595,77 @@ class App(tk.Tk):
         if not state: return
         self.logic.save_state_homelands(state, self.current_state_homelands)
         messagebox.showinfo("Success", "Homelands saved.")
+
+    def refresh_buildings_list(self):
+        self.lb_buildings.delete(0, tk.END)
+        for b in self.current_state_buildings:
+            display_val = f"{b['type']} - Lvl {b['level']} ({b['owner']})"
+            self.lb_buildings.insert(tk.END, display_val)
+
+    def on_building_select(self, event=None):
+        sel = self.lb_buildings.curselection()
+        if sel:
+            idx = sel[0]
+            if idx < len(self.current_state_buildings):
+                b = self.current_state_buildings[idx]
+                self.sm_building_level.set(str(b['level']))
+
+    def add_state_building_ui(self):
+        state = self.sm_state_name.get().strip()
+        if not state: return messagebox.showerror("Error", "Load a state first.")
+
+        b_type = self.sm_building_add.get().strip()
+        if not b_type: return
+
+        try:
+            lvl = int(self.sm_building_level.get())
+        except: return messagebox.showerror("Error", "Level must be integer.")
+
+        # Need owner. Default to first owner found in state?
+        # Or maybe the currently selected building's owner?
+        # Or simple input dialog?
+        # User prompt didn't specify how to select owner for NEW building.
+        # "drop down menu showing all building types... and set its level."
+        # Usually buildings are added to a specific tag's region_state.
+        # Let's prompt for tag, defaulting to the first tag seen in current buildings or pops.
+
+        default_tag = ""
+        if self.current_state_buildings:
+            default_tag = self.current_state_buildings[0]['owner']
+        elif self.current_state_pops:
+            default_tag = self.current_state_pops[0]['region_tag']
+
+        owner = simpledialog.askstring("Input", "Owner Tag (e.g. FRA):", initialvalue=default_tag)
+        if not owner: return
+
+        clean_owner = self.logic.format_tag_clean(owner)
+        self.logic.add_state_building(state, clean_owner, b_type, lvl)
+        self.load_state_manager_data() # Refresh
+
+    def remove_state_building_ui(self):
+        sel = self.lb_buildings.curselection()
+        if not sel: return
+
+        idx = sel[0]
+        if idx < len(self.current_state_buildings):
+            b = self.current_state_buildings[idx]
+            if messagebox.askyesno("Confirm", f"Remove {b['type']} owned by {b['owner']}?"):
+                self.logic.save_state_building(b, delete=True)
+                self.load_state_manager_data()
+
+    def update_state_building_level_ui(self):
+        sel = self.lb_buildings.curselection()
+        if not sel: return
+
+        idx = sel[0]
+        if idx < len(self.current_state_buildings):
+            b = self.current_state_buildings[idx]
+            try:
+                new_lvl = int(self.sm_building_level.get())
+            except: return messagebox.showerror("Error", "Level must be integer.")
+
+            self.logic.save_state_building(b, new_level=new_lvl)
+            self.load_state_manager_data()
 
     def on_state_pop_select(self, event=None):
         idx = self.cb_pop_select.current()
